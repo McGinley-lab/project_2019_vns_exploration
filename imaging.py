@@ -36,6 +36,50 @@ sns.set(style='ticks', font='Arial', font_scale=1, rc={
 sns.plotting_context()
 
 
+def lavaan(df, X, Y, M, C=False, zscore=True,):
+    
+    import rpy2.robjects as robjects
+    from rpy2.robjects import pandas2ri
+    from rpy2.robjects import default_converter
+    from rpy2.robjects.conversion import localconverter
+
+
+    df['X'] = df[X].copy()
+    df['Y'] = df[Y].copy()
+    df['M'] = df[M].copy()
+
+    # convert datafame:
+    with localconverter(default_converter + pandas2ri.converter) as cv:
+        df_r = pandas2ri.py2ri(df)
+    
+    # load lavaan and data:
+    robjects.r('library(lavaan)')
+    robjects.globalenv["data_s"] = df_r
+
+    print(robjects.r("typeof(data_s$X)"))
+    print(robjects.r("typeof(data_s$Y)"))
+    print(robjects.r("typeof(data_s$M)"))
+
+    # zscore:
+    if zscore:
+        robjects.r("data_s['X'] = (data_s[['X']] - mean(data_s[['X']])) / sd(data_s[['X']])")
+        robjects.r("data_s['Y'] = (data_s[['Y']] - mean(data_s[['Y']])) / sd(data_s[['Y']])")
+        robjects.r("data_s['M'] = (data_s[['M']] - mean(data_s[['M']])) / sd(data_s[['M']])")
+
+    if C == True:
+        robjects.r("model = 'Y ~ c*X + C\nM ~ a*X + C\nY ~ b*M\nab := a*b\ntotal := c + (a*b)'")
+        robjects.r('fit = sem(model, data=data_s, se="bootstrap")')
+        c = np.array(pandas2ri.ri2py(robjects.r('coef(fit)')))[np.array([0,2,4])]
+    else:
+        robjects.r("model = 'Y ~ c*X\nM ~ a*X\nY ~ b*M\nab := a*b\ntotal := c + (a*b)'")
+        robjects.r('fit = sem(model, data=data_s, se="bootstrap")')
+        c = pandas2ri.ri2py(robjects.r('coef(fit)')[0:3])
+    
+    c = robjects.r("parameterEstimates(fit)")
+    # c = robjects.r("summary(fit)")
+
+    return c
+
 def check_cell(df, conditions, min_timepoints=5, max_pvalue=0.01, start=0, end=5):
     times = np.array(df.columns, dtype=float)
     times = times[(times>=start)&(times>=start)]
@@ -262,7 +306,7 @@ def cross_validate(df, start=1, end=11, p_cutoff=0.05, baseline=True):
 # raw data dir:
 preprocess = False
 parallel = True
-n_jobs = 20
+n_jobs = 12
 backend = 'loky'
 
 # parameters:
@@ -319,6 +363,7 @@ epochs_v = pd.read_hdf(os.path.join(data_dir, 'epochs_v.hdf'), key='velocity')
 epochs_p = pd.read_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil')
 epochs_l = pd.read_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid')
 epochs_b = pd.read_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
+
 
 # settings
 motion_cutoff = 2
@@ -536,22 +581,13 @@ image_motion_y = epochs_y.quantile(0.95, axis=1)
 df_meta['calcium'] = df_meta['calcium_1']-df_meta['calcium_0']
 df_meta['motion_x'] = np.array(image_motion_x)
 df_meta['motion_y'] = np.array(image_motion_y)
-df_meta['train_amp_bin'] = df_meta['amplitude'].copy()
-df_meta['train_width_bin'] = df_meta['width'].copy()
-df_meta['train_rate'] = df_meta['rate'].copy()
-df_meta['train_rate_bin'] = df_meta['rate'].copy()
-df_meta['charge_bin'] = df_meta['charge'].copy()
-df_meta['charge_ps_bin'] = df_meta['charge_ps'].copy()
-df_meta['amp_intended'] = df_meta['amplitude'].copy()
-df_meta['width_intended'] = df_meta['width'].copy()
-df_meta['rate_intended'] = df_meta['rate'].copy()
-df_meta['charge_intended'] = df_meta['charge'].copy()
-df_meta['charge_ps_intended'] = df_meta['charge_ps'].copy()
+df_meta['amplitude_bin'] = df_meta['amplitude'].copy()
+df_meta['width_bin'] = df_meta['width'].copy()
+df_meta['rate_bin'] = df_meta['rate'].copy()
 df_meta['charge_bin'] = pd.cut(df_meta['charge'], [0,0.035,0.065,0.105,0.19,1], labels=False)
+df_meta['charge_ps_bin'] = df_meta['charge_ps'].copy()
 
 shell()
-
-
 
 imp.reload(vns_analyses)
 # for measure in ['pupil', 'velocity', 'walk', 'eyelid', 'calcium']:
@@ -577,9 +613,9 @@ for measure in ['pupil', 'calcium']:
 
         if not measure == 'walk':
             if measure == 'velocity':
-                fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[ind, ::25], timewindows=timewindows, ylabel=measure+'_1', ylim=(-ylim[1],ylim[1]))
+                fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[ind, ::10], timewindows=timewindows, ylabel=measure+'_1', ylim=(-ylim[1],ylim[1]))
             else:
-                fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[ind, ::25], timewindows=timewindows, ylabel=measure+'_1', ylim=ylim)
+                fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[ind, ::10], timewindows=timewindows, ylabel=measure+'_1', ylim=ylim)
             fig.savefig(os.path.join(fig_dir, measure, 'timecourses_{}_{}.pdf'.format(measure, walk)))
 
         for measure_ext in ['', '_c', '_c2']:
@@ -612,75 +648,121 @@ for measure in ['pupil', 'calcium']:
                 fig.savefig(os.path.join(fig_dir, measure, 'matrix_{}_{}.pdf'.format(measure+measure_ext, walk)))
             except:
                 pass
+        
+        if measure == 'calcium':
 
-def lavaan(df, X, Y, M, C=False, zscore=True,):
-    
-    import rpy2.robjects as robjects
-    from rpy2.robjects import pandas2ri
-    from rpy2.robjects import default_converter
-    from rpy2.robjects.conversion import localconverter
+            # across good stims:
+            x = np.array(epochs_c.columns, dtype=float)
+            fig = plt.figure(figsize=(3,2))
+            ax = fig.add_subplot(1,1,1)
+            m = np.array(epochs_c.loc[ind,:].groupby('group').mean())
+            s = np.array(epochs_c.loc[ind,:].groupby('group').sem())
+            for i, c in enumerate(['black', 'green', 'red']):
+                plt.fill_between(x, m[i]-s[i], m[i]+s[i], color=c, alpha=0.2)
+                plt.plot(x, m[i], color=c)
 
 
-    df['X'] = df[X].copy()
-    df['Y'] = df[Y].copy()
-    df['M'] = df[M].copy()
+            pvals = sp.stats.ttest_ind(np.array(epochs_c.loc[ind & (epochs_c.index.get_level_values('group')==1),:]), 
+                                        np.array(epochs_c.loc[ind & (epochs_c.index.get_level_values('group')==2),:]), axis=0)[1]
+            sig_indices = np.array(pvals<0.05, dtype=int)
+            sig_indices[0] = 0
+            sig_indices[-1] = 0
+            s_bar = zip(np.where(np.diff(sig_indices)==1)[0]+1, np.where(np.diff(sig_indices)==-1)[0])
+            for sig in s_bar:
+                ax.hlines(-0.1, x[int(sig[0])]-(np.diff(x)[0] / 2.0), x[int(sig[1])]+(np.diff(x)[0] / 2.0), color='green', alpha=1, linewidth=2.5)
+            
+            
+            plt.axvline(0, lw=0.5, color='k')
+            plt.axhline(0, lw=0.5, color='k')
+            plt.xlabel('Time from pulse (s)')
+            sns.despine(trim=False, offset=3)
+            plt.tight_layout()
+            fig.savefig(os.path.join(fig_dir, measure, 'vns_pulse_{}.pdf'.format(walk)))
 
-    # convert datafame:
-    with localconverter(default_converter + pandas2ri.converter) as cv:
-        df_r = pandas2ri.py2ri(df)
-    
-    # load lavaan and data:
-    robjects.r('library(lavaan)')
-    robjects.globalenv["data_s"] = df_r
+            fig = plt.figure(figsize=(3,2))
+            ax = fig.add_subplot(1,1,1)
+            m = np.array(epochs_x.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).mean())
+            s = np.array(epochs_x.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).sem())
+            for i, c in enumerate(['black', 'green', 'red']):
+                plt.fill_between(x, m[i]-s[i], m[i]+s[i], color=c, alpha=0.2)
+                plt.plot(x, m[i], color=c)
+            plt.axvline(0, lw=0.5, color='k')
+            plt.axhline(0, lw=0.5, color='k')
+            plt.xlabel('Time from pulse (s)')
+            plt.ylim(0,2)
+            sns.despine(trim=False, offset=3)
+            plt.tight_layout()
+            fig.savefig(os.path.join(fig_dir, measure, 'vns_pulse_{}_x.pdf'.format(walk)))
 
-    print(robjects.r("typeof(data_s$X)"))
-    print(robjects.r("typeof(data_s$Y)"))
-    print(robjects.r("typeof(data_s$M)"))
+            fig = plt.figure(figsize=(3,2))
+            ax = fig.add_subplot(1,1,1)
+            m = np.array(epochs_y.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).mean())
+            s = np.array(epochs_y.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).sem())
+            for i, c in enumerate(['black', 'green', 'red']):
+                plt.fill_between(x, m[i]-s[i], m[i]+s[i], color=c, alpha=0.2)
+                plt.plot(x, m[i], color=c)
+            plt.axvline(0, lw=0.5, color='k')
+            plt.axhline(0, lw=0.5, color='k')
+            plt.xlabel('Time from pulse (s)')
+            plt.ylim(0,2)
+            sns.despine(trim=False, offset=3)
+            plt.tight_layout()
+            fig.savefig(os.path.join(fig_dir, measure, 'vns_pulse_{}_y.pdf'.format(walk)))
 
-    # zscore:
-    if zscore:
-        robjects.r("data_s['X'] = (data_s[['X']] - mean(data_s[['X']])) / sd(data_s[['X']])")
-        robjects.r("data_s['Y'] = (data_s[['Y']] - mean(data_s[['Y']])) / sd(data_s[['Y']])")
-        robjects.r("data_s['M'] = (data_s[['M']] - mean(data_s[['M']])) / sd(data_s[['M']])")
 
-    if C == True:
-        robjects.r("model = 'Y ~ c*X + C\nM ~ a*X + C\nY ~ b*M\nab := a*b\ntotal := c + (a*b)'")
-        robjects.r("fit = sem(model, data=data_s,)")
-        c = np.array(pandas2ri.ri2py(robjects.r('coef(fit)')))[np.array([0,2,4])]
-    else:
-        robjects.r("model = 'Y ~ c*X\nM ~ a*X\nY ~ b*M\nab := a*b\ntotal := c + (a*b)'")
-        robjects.r("fit = sem(model, data=data_s)")
-        c = pandas2ri.ri2py(robjects.r('coef(fit)')[0:3])
-    
-    c = robjects.r("parameterEstimates(fit)")
-    # c = robjects.r("summary(fit)")
+# 3d plot:
+pupil_measure = 'pupil_c'
 
-    return c
+fig = vns_analyses.hypersurface(df_meta, z_measure=pupil_measure)
+fig.savefig(os.path.join(fig_dir, '3d_surface_pupil.pdf'))
 
-res = lavaan(df=df_meta, X='charge_ps', Y='velocity', M='calcium', C=False, zscore=True,)
-print(res)
-
-res = lavaan(df=df_meta.loc[~np.isnan(df_meta['pupil']),:], X='charge_ps', Y='pupil', M='calcium', C=False, zscore=True,)
-print(res)
-
+from sklearn.model_selection import KFold
+from scipy.optimize import curve_fit
 from rpy2.robjects import pandas2ri
-res = pandas2ri.ri2py(res)  
 
-y = np.array([float(res.loc[res['label']=='total','est']), float(res.loc[res['label']=='ab','est']), float(res.loc[res['label']=='c','est'])])
-y1 = np.array([float(res.loc[res['label']=='total','ci.lower']), float(res.loc[res['label']=='ab','ci.lower']), float(res.loc[res['label']=='c','ci.lower'])])
-y2 = np.array([float(res.loc[res['label']=='total','ci.upper']), float(res.loc[res['label']=='ab','ci.upper']), float(res.loc[res['label']=='c','ci.upper'])])
-ci = y2-y1
-fig = plt.figure(figsize=(2,2))
-plt.bar([0,1,2], y, yerr=ci)
-fig.savefig(os.path.join(fig_dir, 'mediation.pdf'))
+func = vns_analyses.log_logistic_3d
+# popt = np.load(os.path.join('/home/jwdegee/vns_exploration', 'params.npy'))
 
-y = np.array([float(res.loc[res['label']=='total','est']), float(res.loc[res['label']=='c','est']),])
-y1 = np.array([float(res.loc[res['label']=='total','ci.lower']), float(res.loc[res['label']=='c','ci.lower']),])
-y2 = np.array([float(res.loc[res['label']=='total','ci.upper']), float(res.loc[res['label']=='c','ci.upper']),])
-ci = y2-y1
+df_meta['ne_p'] = np.NaN
+df_meta['ne_c'] = np.NaN
+kf = KFold(n_splits=20, shuffle=True)
+fold_nr = 1
+for train_index, test_index in kf.split(df_meta):
+    print('fold {}'.format(fold_nr))
+    # print("TRAIN:", train_index, "TEST:", test_index)
+    popt, pcov = curve_fit(func, np.array(df_meta[['charge', 'rate']].iloc[train_index]), np.array(df_meta[pupil_measure].iloc[train_index]),)
+    df_meta.loc[test_index, 'ne_p'] = func(np.array(df_meta.loc[test_index,['charge', 'rate']]) ,*popt)
+    popt, pcov = curve_fit(func, np.array(df_meta[['charge', 'rate']].iloc[train_index]), np.array(df_meta['calcium'].iloc[train_index]),)
+    df_meta.loc[test_index, 'ne_c'] = func(np.array(df_meta.loc[test_index,['charge', 'rate']]) ,*popt)
+    fold_nr+=1
 
-plt.figure()
-plt.bar([0,1], y, yerr=ci)
+for X in ['ne_p', 'ne_c']:
+
+    res = lavaan(df=df_meta.loc[~np.isnan(df_meta[pupil_measure]),:], X=X, Y=pupil_measure, M='calcium', C=False, zscore=True,)
+    res = pandas2ri.ri2py(res)
+    print(res)
+
+    y = np.array([float(res.loc[res['label']=='total','est']), float(res.loc[res['label']=='ab','est']), float(res.loc[res['label']=='c','est'])])
+    y1 = np.array([float(res.loc[res['label']=='total','ci.lower']), float(res.loc[res['label']=='ab','ci.lower']), float(res.loc[res['label']=='c','ci.lower'])])
+    y2 = np.array([float(res.loc[res['label']=='total','ci.upper']), float(res.loc[res['label']=='ab','ci.upper']), float(res.loc[res['label']=='c','ci.upper'])])
+    ci = y2-y1
+
+    fig = plt.figure(figsize=(8,2))
+    ax = fig.add_subplot(141)
+    plt.bar([0,1,2], y, yerr=ci)
+    plt.xticks([0,1,2], ['c','a*b',"c'"])
+    ax = fig.add_subplot(142)
+    sns.regplot(df_meta[X], df_meta[pupil_measure], line_kws={'color': 'red'})
+    ax = fig.add_subplot(143)
+    sns.regplot(df_meta[X], df_meta['calcium'], line_kws={'color': 'red'})
+    ax = fig.add_subplot(144)
+    sns.regplot(df_meta[pupil_measure], df_meta['calcium'], line_kws={'color': 'red'})
+    sns.despine(trim=False, offset=3)
+    plt.tight_layout()
+    fig.savefig(os.path.join(fig_dir, 'mediation_{}.pdf'.format(X)))
+
+
+
 
 
 
@@ -742,78 +824,7 @@ for walk in [0,1,2]:
     elif walk == 2:
         ind = np.array((abs(df['motion_x'])<motion_cutoff) & (abs(df['motion_y'])<motion_cutoff))
     
-    print(ind.mean())
 
-    timewindows = {'calcium' : [(0.5,5), (None, None)],}
-    fig = vns_analyses.plot_timecourses(df.loc[ind,:], epochs_c.loc[ind,:], timewindows, ylabel='calcium', ylim=(-0.2, 0.8))
-    fig.savefig(os.path.join(fig_dir, 'vns_pulse_parametric_{}.pdf'.format(walk)))
-
-    fig = vns_analyses.plot_timecourses(df.loc[ind,:], epochs_p.loc[ind,:], timewindows, ylabel='calcium', ylim=(-0.1, 0.5))
-    fig.savefig(os.path.join(fig_dir, 'vns_pulse_parametric_{}_pupil.pdf'.format(walk)))
-
-    fig = vns_analyses.plot_timecourses(df.loc[ind,:], epochs_l.loc[ind,:], timewindows, ylabel='calcium', ylim=(-0.1, 0.1))
-    fig.savefig(os.path.join(fig_dir, 'vns_pulse_parametric_{}_eyelid.pdf'.format(walk)))
-
-    fig = vns_analyses.plot_timecourses(df.loc[ind,:], epochs_v.loc[ind,:], timewindows, ylabel='calcium', ylim=(-0.1, 0.1))
-    fig.savefig(os.path.join(fig_dir, 'vns_pulse_parametric_{}_velocity.pdf'.format(walk)))
-    
-    for measure in ['calcium', 'calcium_c']:
-        fig = vns_analyses.plot_scalars(df.loc[ind,:], measure=measure, ylabel=measure, ylim=(-0.1, 0.8), p0=True)
-        fig.savefig(os.path.join(fig_dir, 'scalars_{}_{}.pdf'.format(walk, measure)))
-
-    # across good stims:
-    x = np.array(epochs_c.columns, dtype=float)
-    fig = plt.figure(figsize=(3,2))
-    ax = fig.add_subplot(1,1,1)
-    m = np.array(epochs_c.loc[ind,:].groupby('group').mean())
-    s = np.array(epochs_c.loc[ind,:].groupby('group').sem())
-    for i, c in enumerate(['black', 'green', 'red']):
-        plt.fill_between(x, m[i]-s[i], m[i]+s[i], color=c, alpha=0.2)
-        plt.plot(x, m[i], color=c)
-    pvals = sp.stats.ttest_ind(np.array(epochs_c.loc[ind & (epochs_c.index.get_level_values('group')==1),:]), 
-                                np.array(epochs_c.loc[ind & (epochs_c.index.get_level_values('group')==2),:]), axis=0)[1]
-    sig_indices = np.array(pvals<0.05, dtype=int)
-    sig_indices[0] = 0
-    sig_indices[-1] = 0
-    s_bar = zip(np.where(np.diff(sig_indices)==1)[0]+1, np.where(np.diff(sig_indices)==-1)[0])
-    for sig in s_bar:
-        ax.hlines(-0.1, x[int(sig[0])]-(np.diff(x)[0] / 2.0), x[int(sig[1])]+(np.diff(x)[0] / 2.0), color='green', alpha=1, linewidth=2.5)
-    plt.axvline(0, lw=0.5, color='k')
-    plt.axhline(0, lw=0.5, color='k')
-    plt.xlabel('Time from pulse (s)')
-    sns.despine(trim=False, offset=3)
-    plt.tight_layout()
-    fig.savefig(os.path.join(fig_dir, 'vns_pulse_{}.pdf'.format(walk)))
-
-    fig = plt.figure(figsize=(3,2))
-    ax = fig.add_subplot(1,1,1)
-    m = np.array(epochs_x.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).mean())
-    s = np.array(epochs_x.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).sem())
-    for i, c in enumerate(['black', 'green', 'red']):
-        plt.fill_between(x, m[i]-s[i], m[i]+s[i], color=c, alpha=0.2)
-        plt.plot(x, m[i], color=c)
-    plt.axvline(0, lw=0.5, color='k')
-    plt.axhline(0, lw=0.5, color='k')
-    plt.xlabel('Time from pulse (s)')
-    plt.ylim(0,2)
-    sns.despine(trim=False, offset=3)
-    plt.tight_layout()
-    fig.savefig(os.path.join(fig_dir, 'vns_pulse_{}_x.pdf'.format(walk)))
-
-    fig = plt.figure(figsize=(3,2))
-    ax = fig.add_subplot(1,1,1)
-    m = np.array(epochs_y.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).mean())
-    s = np.array(epochs_y.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).sem())
-    for i, c in enumerate(['black', 'green', 'red']):
-        plt.fill_between(x, m[i]-s[i], m[i]+s[i], color=c, alpha=0.2)
-        plt.plot(x, m[i], color=c)
-    plt.axvline(0, lw=0.5, color='k')
-    plt.axhline(0, lw=0.5, color='k')
-    plt.xlabel('Time from pulse (s)')
-    plt.ylim(0,2)
-    sns.despine(trim=False, offset=3)
-    plt.tight_layout()
-    fig.savefig(os.path.join(fig_dir, 'vns_pulse_{}_y.pdf'.format(walk)))
 
 
 # ind = np.array((abs(image_pos_x)<10) & (abs(image_pos_y)<10) & (abs(image_motion_x)<motion_cutoff) & (abs(image_motion_y)<motion_cutoff) & (abs(distance)<velocity_cutoff))
