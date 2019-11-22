@@ -35,13 +35,30 @@ def fsigmoid(x, a, b, s):
 def log_logistic(x, a, b, s):
     return s/(1+((x/a)**-b))
 
-def log_logistic_3d(M, a1, b1, s1, a2, b2, s2):
+def log_logistic_3d(M, a1, b1, s, a2, b2):
     x = M[:,0]
     y = M[:,1]
-    return (s1/(1+((x/a1)**-b1))) * (s2/(1+((y/a2)**-b2)))
+    return (s/(1+((x/a1)**-b1))) * (1/(1+((y/a2)**-b2)))
+
+def log_logistic_4d(M, a1, b1, s, a2, b2, a3, b3):
+    x = M[:,0]
+    y = M[:,1]
+    z = M[:,2]
+    return (s/(1+((x/a1)**-b1))) * (1/(1+((y/a2)**-b2))) * (1/(1+((z/a3)**-b3)))
 
 def linear(x,a,b):
-  return a + b*x 
+    return a + b*x 
+
+def linear_3d(M,a1,b1,a2,b2):
+    x = M[:,0]
+    y = M[:,1]
+    return (a1+b1*x) * (a2+b2*y)
+
+def linear_4d(M,a1,b1,a2,b2,a3,b3):
+    x = M[:,0]
+    y = M[:,1]
+    z = M[:,2]
+    return (a1+b1*x) + (a2+b2*y) + (a3+b3*z)
 
 def quadratic(x,a,b,c):
   return a + b*x + c*x**2  
@@ -67,9 +84,9 @@ def hypersurface(df, z_measure):
 
     # fit:
     func = log_logistic_3d
-    popt, pcov = curve_fit(func, np.array(df.loc[:,['charge', 'rate']]), 
-                                np.array(df.loc[:,z_measure]),)
-
+    popt, pcov = curve_fit(func, np.array(df.loc[:,['charge', 'rate']]), np.array(df.loc[:,z_measure]), 
+                            method='trf', bounds=([0,0,0,0,0],[np.inf, np.inf, np.inf, np.inf, np.inf]))
+    
     # fitted surface:
     XX, YY = np.meshgrid(np.linspace(0,0.8,25), np.linspace(0,20,25))
     ZZ = np.zeros(XX.shape)
@@ -114,17 +131,30 @@ def hypersurface(df, z_measure):
 
     return fig
 
-def plot_param_preprocessing(df, popt, popts):
+def plot_param_preprocessing(df, popt=None, popts=None):
 
-    X = np.array(df.groupby(['width']).mean().reset_index()['width'])
-    y = np.array(df.groupby(['width']).mean().reset_index()['amplitude_m'])
+    func = fsigmoid
+
+    X = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width'])
+    y = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['amplitude_m'])
     widths = np.unique(df['width'])
 
+    if popt is None:
+        popt, pcov = curve_fit(func, X, y, method='trf', bounds=([2, -0.75, y.max()/2],[20, 0.75, y.max()*2]))
+    if popts is None:
+        popts = []
+        for b in np.unique(df['amplitude_m_bin']):
+            _popt, _pcov = curve_fit(lambda x, s: func(x, popt[0], popt[1], s),
+                                        np.array(df.loc[df['amplitude_m_bin']==b,:].groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width']), 
+                                        np.array(df.loc[df['amplitude_m_bin']==b,:].groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['amplitude_m']))
+            popts.append(_popt)
+    
     fig = plt.figure(figsize=(9,12))
     gs = gridspec.GridSpec(4,3)
 
     ax = plt.subplot(gs[0,0])
-    ax.scatter(df['width'], df['amplitude_m'],)
+    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['width'],
+                df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['amplitude_m'])
     rect = patches.Rectangle((widths[-2]-0.1, df['amplitude_m_mean'].mean()-0.05), widths[-1]-widths[-2]+0.2, 0.1, linewidth=1,edgecolor='r',facecolor='none')
     ax.add_patch(rect)
     plt.xticks(np.unique(df['width']), np.unique(df['width']))
@@ -133,29 +163,34 @@ def plot_param_preprocessing(df, popt, popts):
     plt.ylabel('Pulse amplitude')
     
     ax = plt.subplot(gs[0,1])
-    plt.bar([0,1], [df['amplitude_m_mean'].iloc[0], df['amplitude_i_min'].iloc[0],])
+    plt.bar(x=[0,1], height=[df.groupby(['subj_idx', 'session',]).mean()['amplitude_m_mean'].mean(), 
+                        df.groupby(['subj_idx', 'session',]).mean()['amplitude_i_min'].mean()],
+            yerr=[df.groupby(['subj_idx', 'session',]).mean()['amplitude_m_mean'].sem(), 
+                        df.groupby(['subj_idx', 'session',]).mean()['amplitude_i_min'].sem()],)
     plt.xticks([0,1], ['M', 'I'])
     plt.ylabel('Pulse amplitude\n(lowest bin; largest widths)')
     
     ax = plt.subplot(gs[0,2])
-    plt.bar([0,1,2], [0, df['leak'].iloc[0], 0])
+    plt.bar(x=[0,1,2], height=[0, df.groupby(['subj_idx', 'session',]).mean()['leak'].mean(), 0],
+                        yerr=[0, df.groupby(['subj_idx', 'session',]).mean()['leak'].sem(), 0])
     plt.xticks([0,1,2], ['','L',''])
     plt.ylabel('Leak fraction')
 
     ax = plt.subplot(gs[1,0])
-    ax.scatter(df['width'], df['amplitude_m'],)
+    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['width'],
+                df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['amplitude_m'])
     plt.xlim(0, 1)
     plt.xlabel('Pulse width')
     plt.ylabel('Pulse amplitude')
     x = np.linspace(X.min(), X.max(), 50)
     for _popt in popts:
-        y_fit = fsigmoid(x, popt[0], popt[1], _popt)
+        y_fit = func(x, popt[0], popt[1], _popt)
         ax.plot(x, y_fit, color='orange')
     plt.xticks(np.unique(df['width']), np.unique(df['width']))
 
     ax = plt.subplot(gs[1,1])
     x = np.linspace(X.min(), X.max(), 50)
-    y_fit = fsigmoid(x, *popt)
+    y_fit = func(x, *popt)
     ax.plot(X, y, 'o', label='data')
     ax.plot(x, y_fit, label='fit', color='orange')
     plt.xlabel('Pulse width')
@@ -164,8 +199,12 @@ def plot_param_preprocessing(df, popt, popts):
     plt.xticks(np.unique(df['width']), np.unique(df['width']))
 
     ax = plt.subplot(gs[2,0])
-    ax.scatter(df['width'], df['amplitude_m'], alpha=0.5)
-    ax.scatter(df['width'], df['amplitude_c'], alpha=0.5, color='lightgreen')
+    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['width'],
+                df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['amplitude_m'],
+                alpha=0.5)
+    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['width'],
+                df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['amplitude_c'],
+                alpha=0.5, color='lightgreen')
     rect = patches.Rectangle((widths[0]-0.1, df.loc[df['amplitude_m_bin']==max(df['amplitude_m_bin']), 'amplitude_c'].mean()-0.05), widths[-1]-widths[0]+0.2, 0.1, linewidth=1,edgecolor='r',facecolor='none')
     ax.add_patch(rect)
     plt.xlim(0, 1)
@@ -174,25 +213,33 @@ def plot_param_preprocessing(df, popt, popts):
     plt.xticks(np.unique(df['width']), np.unique(df['width']))
 
     ax = plt.subplot(gs[2,1])
-    plt.bar([0,1,], [df.loc[df['amplitude_m_bin']==max(df['amplitude_m_bin']), 'amplitude_c'].mean(), 
-                        df['amplitude_i_max'].iloc[0]])
+    plt.bar(x=[0,1,], height=[df.loc[df['amplitude_m_bin']==4,:].groupby(['subj_idx', 'session',]).mean()['amplitude_c'].mean(), 
+                                df.groupby(['subj_idx', 'session',]).mean()['amplitude_i_max'].mean()],
+                    yerr = [df.loc[df['amplitude_m_bin']==4,:].groupby(['subj_idx', 'session',]).mean()['amplitude_c'].sem(), 
+                                df.groupby(['subj_idx', 'session',]).mean()['amplitude_i_max'].sem()])
     plt.xticks([0,1], ['C', 'I'])
     plt.ylabel('Pulse amplitude\n(highest bin)')
 
     ax = plt.subplot(gs[2,2])
-    plt.bar([0,1,2], [0, df['saturation'].iloc[0], 0])
+    plt.bar(x=[0,1,2], height=[0, df.groupby(['subj_idx', 'session',]).mean()['saturation'].mean(), 0],
+                    yerr=[0, df.groupby(['subj_idx', 'session',]).mean()['saturation'].sem(), 0])
+    
     plt.xticks([0,1,2], ['','S',''])
     plt.ylabel('Saturation')
 
     ax = plt.subplot(gs[3,:])
-    ax.plot(np.arange(60), df['amplitude_c_norm'], '-o')
+    ax.errorbar(x=sorted(df['trial'].unique()), 
+                y=df.groupby('trial')['amplitude_c_norm'].mean(),
+                yerr=df.groupby('trial')['amplitude_c_norm'].sem(), fmt='-o')
     plt.xlabel('Stim #')
     plt.ylabel('Pulse amplitude\n(normalized)')
     plt.ylim(0,2)
 
     sns.despine(trim=False, offset=3)
     plt.tight_layout()
+
     return fig
+
 
 def catplot_nr_trials(df, ind1, ind2, charge=None):
 
@@ -217,7 +264,7 @@ def catplot_nr_trials(df, ind1, ind2, charge=None):
     sns.despine(trim=False, offset=3)
     return fig
 
-def plot_timecourses(df_stim, epochs, timewindows, ylabel='Pupil response', ylim=(None, None)):
+def plot_timecourses(df_meta, epochs, timewindows, ylabel='Pupil response', ylim=(None, None)):
 
     x = np.array(epochs.columns, dtype=float)
     fig = plt.figure(figsize=(10,2))
@@ -228,9 +275,9 @@ def plot_timecourses(df_stim, epochs, timewindows, ylabel='Pupil response', ylim
         # try:
         if isinstance(bin_by, list):
             for b in bin_by:
-                epochs[b] = np.array(df_stim[b])
+                epochs[b] = np.array(df_meta[b])
         else:
-            epochs[bin_by] = np.array(df_stim[bin_by])
+            epochs[bin_by] = np.array(df_meta[bin_by])
         epochs = epochs.set_index(bin_by, append=True, inplace=False)
         
         m = np.array(epochs.groupby(bin_by).mean())
@@ -249,7 +296,7 @@ def plot_timecourses(df_stim, epochs, timewindows, ylabel='Pupil response', ylim
             ax.axvspan(span[0], span[1], color='k', alpha=0.1)
 
         if 'charge' in param:
-            sorting = np.argsort(df_stim.groupby(bin_by).mean()['charge_ps'].reset_index()['charge_ps'])
+            sorting = np.argsort(df_meta.groupby(bin_by).mean()['charge_ps'].reset_index()['charge_ps'])
             m = m[sorting,:]
             s = s[sorting,:]
         
@@ -322,40 +369,49 @@ def catplot_scalars(df, measure, ylim, log_scale=False, charge=None):
     sns.despine(trim=False, offset=3)
     return fig
 
-def plot_scalars(df_stim, measure, ylabel='Pupil response', ylim=(None, None), p0=False):
+def plot_scalars(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p0=False):
 
+    # fit function:
+    x = np.array(df_meta.loc[:,['amplitude', 'width', 'rate']])
+    y = np.array(df_meta.loc[:,[measure]]).ravel()
+    if 'corrXY' in measure:
+        func = linear_4d
+        popt, pcov = curve_fit(func, x, y)
+    else:
+        func = log_logistic_4d
+        popt, pcov = curve_fit(func, x, y,
+                        method='trf', bounds=([0, 0, 0, 0, 0, 0, 0], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf]), max_nfev=10000)
+    
+    # fitted surface:
+    x1 = np.arange(0,0.9025,0.025) 
+    x2 = np.arange(0,0.8025,0.025)
+    x3 = np.arange(0,21,1)
+    XX1, XX2, XX3 = np.meshgrid(x1, x2, x3)
+    df_surf = pd.DataFrame({'amplitude': XX1.ravel(),
+                            'width': XX2.ravel(),
+                            'rate': XX3.ravel()})
+    df_surf['ne'] = func(np.array(df_surf[['amplitude', 'width', 'rate']]), *popt)
+    
+    # variance explained:
+    predictions = func(x, *popt) 
+    r2 = (sp.stats.pearsonr(df_meta[measure], predictions)[0]**2) * 100
+
+    # plot:
     fig = plt.figure(figsize=(8,2))
     plot_nr = 1
-    
-    if 'calcium' in measure:
-        # bar_split = 'charge_bin'
-        bar_split = ['charge_bin', 'rate']
-    else:
-        # bar_split = 'charge_bin'
-        bar_split = ['charge_bin', 'rate']
-    
+    bar_split = ['charge_bin', 'rate']
     for bin_by, x_measure, param in zip(['amplitude_bin', 'width_bin', 'rate_bin', bar_split,], 
                                         ['amplitude', 'width', 'rate', 'charge',], 
                                         ['amplitude', 'width', 'rate', 'charge',]):
-
-        means = df_stim.groupby(bin_by)[[measure, x_measure]].mean().reset_index()
-        sems = df_stim.groupby(bin_by)[[measure, x_measure]].sem().reset_index()
-        sems[measure] = sems[measure]*1.96
-
-        # try:
-        #     means = df_stim.groupby(['subj_idx', bin_by]).mean().groupby(bin_by)[[measure, x_measure]].mean().reset_index()
-        #     sems = df_stim.groupby(['subj_idx', bin_by]).mean().groupby(bin_by)[[measure, x_measure]].sem().reset_index()
-        # except:
-        #     continue
-    
+        means = df_meta.groupby(bin_by)[[measure, x_measure]].mean().reset_index()
+        sems = df_meta.groupby(bin_by)[[measure, x_measure]].sem().reset_index()
+        sems[measure] = sems[measure]*1.96    
         colors = sns.color_palette("YlOrRd", means.shape[0])
-
         ax = fig.add_subplot(1,4,plot_nr)
 
         if 'charge' in x_measure:
-            
             p_values = []
-            for df, d in df_stim.groupby(bin_by):
+            for df, d in df_meta.groupby(bin_by):
                 if p0:
 
                     if len(bin_by) == 2:
@@ -363,7 +419,7 @@ def plot_scalars(df_stim, measure, ylabel='Pupil response', ylim=(None, None), p
                     else:
                         bb = bin_by
                     print(bb)
-                    baseline = df_stim.loc[df_stim[bb]==min(df_stim[bb]), measure]
+                    baseline = df_meta.loc[df_meta[bb]==min(df_meta[bb]), measure]
                     t,p = sp.stats.ttest_ind(d[measure], baseline)
                 else:
                     t,p = sp.stats.ttest_1samp(d[measure], 0)
@@ -373,18 +429,11 @@ def plot_scalars(df_stim, measure, ylabel='Pupil response', ylim=(None, None), p
             else:
                 p_values = sm.stats.multitest.multipletests(np.array(p_values), alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)[1]
             print(p_values)
-
             with matplotlib.rc_context({"lines.linewidth": 0.5}):
-                # if 'calcium' in measure:
-                #     sns.barplot(x='charge_bin', y=measure, ci=95, palette='YlOrRd', data=df_stim)
-                #     nr_rates = 1
-
-                # else:
-                sns.barplot(x='charge_bin', y=measure, hue='rate', ci=95, palette='YlOrRd', data=df_stim)
-                nr_rates = len(df_stim['rate_bin'].unique())
+                sns.barplot(x='charge_bin', y=measure, hue='rate', ci=95, palette='YlOrRd', data=df_meta)
+                nr_rates = len(df_meta['rate_bin'].unique())
             width = 0.8/nr_rates 
             locs = np.cumsum(np.repeat(width,nr_rates))-np.cumsum(np.repeat(width,nr_rates)).mean()               
-
             for i in range(p_values.shape[0]):
                 if p_values[i] < 0.001:
                     sig = '***'
@@ -395,44 +444,35 @@ def plot_scalars(df_stim, measure, ylabel='Pupil response', ylim=(None, None), p
                 else:
                     sig = 'n.s.'
                 ax.text(x=int(i/nr_rates)+locs[(i%nr_rates)]+width/4, y=0.75*ylim[1], s=sig, size=6, horizontalalignment='center', verticalalignment='center', rotation=90)
-
             try:
                 ax.get_legend().remove()
             except:
                 pass
+        
         else:
+
+            # data:
             x = np.array(means[x_measure])
             y = np.array(means[measure])
-
-            if 'charge' in x_measure:
-                x = np.log10(x)
             for i in range(len(x)):
                 plt.plot(x[i],y[i], 'o', mfc='lightgrey', color=colors[i], zorder=1)
             ax.errorbar(x=x, y=y, yerr=sems[measure], fmt='none', elinewidth=0.5, markeredgewidth=0.5, ecolor='k', capsize=2, zorder=2)
-            y = y[np.argsort(x)]
-            x = x[np.argsort(x)]
             
-            try:
-                if 'charge' in x_measure:
-                    popt, pcov = curve_fit(fsigmoid, x, y, method='dogbox', bounds=([-100, -0.75, y.max()/2],[100, 0.75, y.max()*2]))
-                    ax.plot(np.linspace(0, max(x), 100), fsigmoid(np.linspace(0, max(x), 100), *popt), color='k', ls='-', zorder=10)
-                else:
-                    popt, pcov = curve_fit(log_logistic, x, y, method='trf', bounds=([0, 0, y.max()/2],[40, 2, y.max()*2]))
-                    ax.plot(np.linspace(0, max(x), 100), log_logistic(np.linspace(0, max(x), 100), *popt), color='k', ls='-', zorder=10)
-            except:
-                pass
+            # fit: 
+            d = df_surf.groupby(x_measure).mean().reset_index()
+            ax.plot(d[x_measure], d['ne'], color='k', ls='-', zorder=10)
 
             # add stats:
+            x = np.array(means[x_measure])
             p_values = []
-            for df, d in df_stim.groupby(bin_by):
+            for df, d in df_meta.groupby(bin_by):
                 if p0:
 
                     if len(bin_by) == 1:
                         bb = bin_by[0]
                     else:
                         bb = bin_by
-                    print(bb)
-                    baseline = df_stim.loc[df_stim[bb]==min(df_stim[bb]), measure]
+                    baseline = df_meta.loc[df_meta[bb]==min(df_meta[bb]), measure]
                     t,p = sp.stats.ttest_ind(d[measure], baseline)
                 else:
                     t,p = sp.stats.ttest_1samp(d[measure], 0)
@@ -442,7 +482,7 @@ def plot_scalars(df_stim, measure, ylabel='Pupil response', ylim=(None, None), p
             else:
                 p_values = sm.stats.multitest.multipletests(np.array(p_values), alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)[1]
             print(min(p_values.ravel()))
-            for i in range(len(x)):
+            for i in range(len(p_values)):
                 if p_values[i] < 0.001:
                     sig = '***'
                 elif p_values[i] < 0.01:
@@ -452,108 +492,89 @@ def plot_scalars(df_stim, measure, ylabel='Pupil response', ylim=(None, None), p
                 else:
                     sig = 'n.s.'
                 ax.text(x=x[i], y=0.75*ylim[1], s=sig, size=6, horizontalalignment='center', verticalalignment='center')
-
+        
         if isinstance(bin_by, str):
-            plt.xticks(ticks=np.round(np.sort(df_stim[x_measure].unique()),1), labels=np.round(np.sort(df_stim[x_measure].unique()),1))
-
+            plt.xticks(ticks=np.round(np.sort(df_meta[x_measure].unique()),1), labels=np.round(np.sort(df_meta[x_measure].unique()),1))
         plt.ylim(ylim)
-        plt.title('{}'.format(param))
+        if x_measure == 'charge':
+            plt.title('{}'.format(measure))
+        else:
+            plt.title('{}\nr2 = {}%'.format(param, round(r2,2),))
         plt.xlabel(x_measure)
         plt.ylabel(ylabel)
-        # plt.legend()
-
-        # ax.get_legend().remove()
         plot_nr += 1
     sns.despine(trim=False, offset=3)
     plt.tight_layout()
+    
     return fig
 
-# def plot_scalars2(df_stim, measure, ylabel='Pupil response', ylim=(None, None)):
+def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None)):
 
-#     fig = plt.figure(figsize=(6,4))
-#     plot_nr = 1
-#     for bin_by, x_measure, param in zip([['amplitude_bin', 'width_bin'], ['width_bin', 'rate_bin'], ['rate_bin', 'amplitude_bin'], ['amplitude_bin', 'rate_bin'], ['width_bin', 'amplitude_bin'], ['rate_bin', 'width_bin']], 
-#                                         ['amplitude', 'width', 'rate', 'amplitude', 'width', 'rate',], 
-#                                         ['amplitude', 'width', 'rate','amplitude', 'width', 'rate',]):
-        
-#         means = df_stim.groupby(bin_by)[[measure, x_measure]].mean().reset_index()
-#         sems = df_stim.groupby(bin_by)[[measure, x_measure]].sem().reset_index()
-#         sems[measure] = sems[measure]*1.96
+    # fit function:
+    x = np.array(df_meta.loc[:,['amplitude', 'width', 'rate']])
+    y = np.array(df_meta.loc[:,[measure]]).ravel()
+    if 'corrXY' in measure:
+        func = linear_4d
+        popt, pcov = curve_fit(func, x, y)
+    else:
+        func = log_logistic_4d
+        popt, pcov = curve_fit(func, x, y,
+                        method='trf', bounds=([0, 0, 0, 0, 0, 0, 0], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf]), max_nfev=10000)
 
-#         ax = fig.add_subplot(2,3,plot_nr)
-#         for i, m2 in enumerate(means[bin_by[1]].unique()):
-            
-#             x = np.array(means.loc[means[bin_by[1]]==m2, x_measure])
-#             y = np.array(means.loc[means[bin_by[1]]==m2, measure])
-#             colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
-#             for j in range(len(x)):
-#                 plt.plot(x[j],y[j], 'o', mfc='lightgrey', color=colors[i], zorder=1)
-#             ax.errorbar(x=x, y=y, yerr=np.array(sems.loc[sems[bin_by[1]]==m2, measure]), elinewidth=0.5, markeredgewidth=0.5, 
-#                             fmt='none', ecolor='darkgrey', capsize=2, zorder=2)
-#             try:
-#                 y = y[np.argsort(x)]
-#                 x = x[np.argsort(x)]
-#                 popt, pcov = curve_fit(log_logistic, x, y, method='trf', bounds=([0, 0, y.max()/2],[40, 2, y.max()*2]))
-#                 ax.plot(np.linspace(0, max(x), 100), log_logistic(np.linspace(0, max(x), 100), *popt), color=colors[i], ls='-', zorder=10)
-#             except:
-#                 pass
-#         plt.ylim(ylim)
-#         plt.title('{}'.format(param))
-#         plt.xlabel(x_measure)
-#         plt.ylabel(ylabel)
-#         # plt.legend()
+    # fitted surface:
+    x1 = np.arange(0,0.9025,0.025) 
+    x2 = np.arange(0,0.8025,0.025)
+    x3 = np.arange(0,21,1)
+    XX1, XX2, XX3 = np.meshgrid(x1, x2, x3)
+    df_surf = pd.DataFrame({'amplitude': XX1.ravel(),
+                            'width': XX2.ravel(),
+                            'rate': XX3.ravel()})
+    df_surf['ne'] = func(np.array(df_surf[['amplitude', 'width', 'rate']]), *popt)
+    
+    # variance explained:
+    predictions = func(x, *popt) 
+    r2 = (sp.stats.pearsonr(df_meta[measure], predictions)[0]**2) * 100
 
-#         # ax.get_legend().remove()
-#         plot_nr += 1
-#     sns.despine(trim=False, offset=3)
-#     plt.tight_layout()
-#     return fig
-
-
-def plot_scalars2(df_stim, measure, ylabel='Pupil response', ylim=(None, None)):
-
+    # plot:
     fig = plt.figure(figsize=(6,4))
     plot_nr = 1
-    for bin_by, x_measure, param in zip([['amplitude_bin', 'width_bin'], ['width_bin', 'rate_bin'], ['rate_bin', 'amplitude_bin'], ['amplitude_bin', 'rate_bin'], ['width_bin', 'amplitude_bin'], ['rate_bin', 'width_bin']], 
+    for bin_by, x_measure, param in zip([['amplitude', 'width'], ['width', 'rate'], ['rate', 'amplitude'], ['amplitude', 'rate'], ['width', 'amplitude'], ['rate', 'width']], 
                                         ['amplitude', 'width', 'rate', 'amplitude', 'width', 'rate',], 
                                         ['amplitude', 'width', 'rate','amplitude', 'width', 'rate',]):
         
-        means = df_stim.groupby(bin_by)[[measure, x_measure]].mean().reset_index()
-        sems = df_stim.groupby(bin_by)[[measure, x_measure]].sem().reset_index()
+        means = df_meta.groupby(bin_by)[[measure]].mean().reset_index()
+        sems = df_meta.groupby(bin_by)[[measure]].sem().reset_index()
         sems[measure] = sems[measure]*1.96
 
         ax = fig.add_subplot(2,3,plot_nr)
+        cut = bin_by[1].split('_')[0]
+        colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
+
         for i, m2 in enumerate(means[bin_by[1]].unique()):
             
+            # data:
             x = np.array(means.loc[means[bin_by[1]]==m2, x_measure])
             y = np.array(means.loc[means[bin_by[1]]==m2, measure])
-            colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
             for j in range(len(x)):
                 plt.plot(x[j],y[j], 'o', mfc='lightgrey', color=colors[i], zorder=1)
             ax.errorbar(x=x, y=y, yerr=np.array(sems.loc[sems[bin_by[1]]==m2, measure]), elinewidth=0.5, markeredgewidth=0.5, 
                             fmt='none', ecolor='darkgrey', capsize=2, zorder=2)
-            try:
-                y = y[np.argsort(x)]
-                x = x[np.argsort(x)]
-                popt, pcov = curve_fit(log_logistic, x, y, method='trf', bounds=([0, 0, y.max()/2],[40, 2, y.max()*2]))
-                ax.plot(np.linspace(0, max(x), 100), log_logistic(np.linspace(0, max(x), 100), *popt), color=colors[i], ls='-', zorder=10)
-            except:
-                pass
+
+            # fit: 
+            d = df_surf.loc[df_surf[cut]==m2,].groupby(x_measure).mean().reset_index()
+            ax.plot(d[x_measure], d['ne'], color=colors[i], ls='-', zorder=10)
+
         plt.ylim(ylim)
-        plt.title('{}'.format(param))
+        plt.title('{}\nr2 = {}%'.format(param, round(r2,2)))
         plt.xlabel(x_measure)
         plt.ylabel(ylabel)
-        # plt.legend()
-
-        plt.xticks(ticks=np.round(np.sort(df_stim[x_measure].unique()),1), labels=np.round(np.sort(df_stim[x_measure].unique()),1))
-
-        # ax.get_legend().remove()
+        plt.xticks(ticks=np.round(np.sort(df_meta[x_measure].unique()),1), labels=np.round(np.sort(df_meta[x_measure].unique()),1))
         plot_nr += 1
     sns.despine(trim=False, offset=3)
     plt.tight_layout()
     return fig
 
-def plot_scalars3(df_stim, measure, ylabel='Pupil response', ylim=(None, None)):
+def plot_scalars3(df_meta, measure, ylabel='Pupil response', ylim=(None, None)):
 
     fig = plt.figure(figsize=(6,2))
     plot_nr = 1
@@ -562,16 +583,16 @@ def plot_scalars3(df_stim, measure, ylabel='Pupil response', ylim=(None, None)):
                                         ['5Hz', '10Hz', '20Hz',]):
         
         if plot_nr == 1:
-            means = df_stim.loc[df_stim['rate']==5,:].groupby(bin_by)[[measure, x_measure]].mean().reset_index()
-            sems = df_stim.loc[df_stim['rate']==5,:].groupby(bin_by)[[measure, x_measure]].sem().reset_index()
+            means = df_meta.loc[df_meta['rate']==5,:].groupby(bin_by)[[measure, x_measure]].mean().reset_index()
+            sems = df_meta.loc[df_meta['rate']==5,:].groupby(bin_by)[[measure, x_measure]].sem().reset_index()
             sems[measure] = sems[measure]*1.96
         if plot_nr == 2:
-            means = df_stim.loc[df_stim['rate']==10,:].groupby(bin_by)[[measure, x_measure]].mean().reset_index()
-            sems = df_stim.loc[df_stim['rate']==10,:].groupby(bin_by)[[measure, x_measure]].sem().reset_index()
+            means = df_meta.loc[df_meta['rate']==10,:].groupby(bin_by)[[measure, x_measure]].mean().reset_index()
+            sems = df_meta.loc[df_meta['rate']==10,:].groupby(bin_by)[[measure, x_measure]].sem().reset_index()
             sems[measure] = sems[measure]*1.96
         if plot_nr == 3:
-            means = df_stim.loc[df_stim['rate']==20,:].groupby(bin_by)[[measure, x_measure]].mean().reset_index()
-            sems = df_stim.loc[df_stim['rate']==20,:].groupby(bin_by)[[measure, x_measure]].sem().reset_index()
+            means = df_meta.loc[df_meta['rate']==20,:].groupby(bin_by)[[measure, x_measure]].mean().reset_index()
+            sems = df_meta.loc[df_meta['rate']==20,:].groupby(bin_by)[[measure, x_measure]].sem().reset_index()
             sems[measure] = sems[measure]*1.96
 
         ax = fig.add_subplot(1,3,plot_nr)
@@ -605,7 +626,11 @@ def plot_scalars3(df_stim, measure, ylabel='Pupil response', ylim=(None, None)):
     plt.tight_layout()
     return fig
 
-def plot_pupil_responses_matrix(df_stim, measure, vmin=-0.1, vmax=0.1):
+def plot_pupil_responses_matrix(df_meta, measure, vmin=-0.1, vmax=0.1):
+
+    nr_amplitude = len(df_meta['amplitude'].unique())
+    nr_width = len(df_meta['width'].unique())
+
 
     from matplotlib.colors import LinearSegmentedColormap
     cmap = LinearSegmentedColormap.from_list('custom', ['blue', 'lightblue', 'lightgrey', 'yellow', 'red'], N=100)
@@ -615,37 +640,39 @@ def plot_pupil_responses_matrix(df_stim, measure, vmin=-0.1, vmax=0.1):
 
     # stats:
     p_values = []
-    for rate_bin in [0,1,2]:
-        t_test = df_stim.loc[df_stim['rate_bin']==rate_bin,:].groupby(['amplitude_bin', 'width_bin'])[measure].apply(sp.stats.ttest_1samp, 0).as_matrix().reshape((5,4))
-        p_values.append( np.array([t_test[i,j][1] for i in range(t_test.shape[0]) for j in range(t_test.shape[1])]).reshape((5,4)) )
+    for rate in sorted(df_meta['rate'].unique()):
+        t_test = df_meta.loc[df_meta['rate']==rate,:].groupby(['amplitude', 'width'])[measure].apply(sp.stats.ttest_1samp, 0).as_matrix().reshape((nr_amplitude,nr_width))
+        p_values.append( np.array([t_test[i,j][1] for i in range(t_test.shape[0]) for j in range(t_test.shape[1])]).reshape((nr_amplitude,nr_width)) )
     p_values = np.stack((p_values))
     p_values = sm.stats.multitest.multipletests(p_values.ravel(), alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)[1].reshape(p_values.shape)
 
     # panels:
-    for rate_bin in [0,1,2,]:
+    for r, rate in enumerate(sorted(df_meta['rate'].unique())):
         ax = fig.add_subplot(1,3,plt_nr)
-        a = df_stim.loc[df_stim['rate_bin']==rate_bin,:].groupby(['amplitude_bin', 'width_bin']).mean()[measure].as_matrix().reshape((5,4))
+        a = df_meta.loc[df_meta['rate']==rate,:].groupby(['amplitude', 'width']).mean()[measure].as_matrix().reshape((nr_amplitude,nr_width))
 
         if measure == 'distance_resp_0c':
-             p_values[rate_bin, (a<0)] = 1
+             p_values[rate, (a<0)] = 1
 
-        cax = ax.pcolormesh(np.arange(5), np.arange(6), a, vmin=vmin, vmax=vmax, cmap=cmap)
+        print(p_values)
+
+        cax = ax.pcolormesh(np.arange(nr_width+1), np.arange(nr_amplitude+1), a, vmin=vmin, vmax=vmax, cmap=cmap)
         for i in range(p_values.shape[1]):
             for j in range(p_values.shape[2]):
-                if p_values[rate_bin,i,j] < 0.001:
+                if p_values[r,i,j] < 0.001:
                     sig = '***'
-                elif p_values[rate_bin,i,j] < 0.01:
+                elif p_values[r,i,j] < 0.01:
                     sig = '**'
-                elif p_values[rate_bin,i,j] < 0.05:
+                elif p_values[r,i,j] < 0.05:
                     sig = '*'
                 else:
                     sig = ''
                 ax.text(x=j+0.5, y=i+0.5, s=sig, size=6, horizontalalignment='center', verticalalignment='center')
-        plt.title('Rate bin {}'.format(rate_bin))
+        plt.title('Rate {}'.format(rate))
         plt.xlabel('Width (ms)')
         plt.ylabel('Amplitude (mA)')
-        plt.xticks(ticks=np.arange(4)+0.5, labels=[0.1, 0.2, 0.4, 0.8])
-        plt.yticks(ticks=np.arange(5)+0.5, labels=[0.1, 0.3, 0.5, 0.7, 0.9])
+        plt.xticks(ticks=np.arange(nr_width)+0.5, labels=sorted(df_meta['width'].unique()))
+        plt.yticks(ticks=np.arange(nr_amplitude)+0.5, labels=sorted(df_meta['amplitude'].unique()))
         plt.colorbar(cax, ticks=[vmin, 0, vmax])
         plt_nr+=1    
     plt.tight_layout()
@@ -925,7 +952,7 @@ def load_stim_parameters(file_meta):
 
     # open meta data:
     file = h5py.File(file_meta, 'r')
-    df_stim = pd.DataFrame({
+    df_meta = pd.DataFrame({
         'time': file['train_starts'][()].ravel(),
         'width': file['train_widths'][()].ravel(),
         'amplitude_m': file['train_amps'][()].ravel(),
@@ -935,21 +962,31 @@ def load_stim_parameters(file_meta):
     pulses =  file['Pulse_idxs'][()].ravel().astype(int)
     stim_si = file['StimSI'][()].ravel()
         
-    return df_stim, frames, pulses, stim_si
+    return df_meta, frames, pulses, stim_si
 
 def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
 
     # correct pupil and eyelid scalars:
     # --------------------------------
 
-    for m in ['pupil', 'eyelid']:
+
+    figs = []
+    if 'calcium_0' in df_meta.columns:
+        mm = ['pupil', 'eyelid', 'calcium']
+    else:
+        mm = ['pupil', 'eyelid']
+    for m in mm:
 
         # make random df:
         dfs = []
+        # for i in [0,-1,-2]:
         for i in [0,-1,-2]:
-            df = df_meta.loc[group,['{}_{}'.format(m, str(i)), '{}_{}'.format(m, str(i-1)), 'subj_idx', 'session']]
-            df = df.rename(columns={'{}_{}'.format(m, str(i)): m, '{}_{}'.format(m, str(i-1)): '{}_b'.format(m)}).reset_index(drop=True)
-            dfs.append(df)
+            try:
+                df = df_meta.loc[group,['{}_{}'.format(m, str(i)), '{}_{}'.format(m, str(i-1)), 'subj_idx', 'session']]
+                df = df.rename(columns={'{}_{}'.format(m, str(i)): m, '{}_{}'.format(m, str(i-1)): '{}_b'.format(m)}).reset_index(drop=True)
+                dfs.append(df)
+            except:
+                pass
         df = pd.concat(dfs)
         df['{}_change'.format(m)] = df[m] - df['{}_b'.format(m)]
         # df['pupil_change'] = df['pupil']
@@ -969,10 +1006,9 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
         func = qubic
 
         # plot:
-        if m == 'pupil':
-            fig1, fig2 = plot_reversion_to_mean_correction(df, measure='pupil', bin_measure='pupil', func=func)
-        if m == 'eyelid':
-            fig3, fig4 = plot_reversion_to_mean_correction(df, measure='eyelid', bin_measure='eyelid', func=func)
+        fig1, fig2 = plot_reversion_to_mean_correction(df, measure=m, bin_measure=m, func=func)
+        figs.append(fig1)
+        figs.append(fig2)
 
         # uncorrected:
         df_meta.loc[group, m] = df_meta.loc[group, '{}_1'.format(m)] - df_meta.loc[group, '{}_0'.format(m)]
@@ -1035,8 +1071,12 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
         func = quadratic
 
         # plot:
-        fig5, fig6 = plot_reversion_to_mean_correction(df.loc[df['velocity_b']>0.005,:], measure='velocity', bin_measure='velocity', func=func)
-        fig7, fig8 = plot_reversion_to_mean_correction(df.loc[df['velocity_b']<=0.005,:], measure='velocity', bin_measure='velocity', func=func)
+        fig1, fig2 = plot_reversion_to_mean_correction(df.loc[df['velocity_b']>0.005,:], measure='velocity', bin_measure='velocity', func=func)
+        figs.append(fig1)
+        figs.append(fig2)
+        fig1, fig2 = plot_reversion_to_mean_correction(df.loc[df['velocity_b']<=0.005,:], measure='velocity', bin_measure='velocity', func=func)
+        figs.append(fig1)
+        figs.append(fig2)
 
         # uncorrected:
         df_meta.loc[group, 'velocity'] = df_meta.loc[group, 'velocity_1'].copy()
@@ -1055,14 +1095,17 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
         df_meta.loc[group, 'velocity_c2'] = np.repeat(np.NaN, df_meta.loc[group,:].shape[0])
         nr_subjects = 0
         for subj in df_meta.loc[group&ind_clean_w,'subj_idx'].unique():
-            ind_r = (df['subj_idx'] == subj)&(df['velocity_b']>0.005)
-            ind = (df_meta['subj_idx'] == subj)&(df_meta['velocity_0']>0.005)&group&ind_clean_w
-            popt, pcov = curve_fit(func, df.loc[ind_r,'velocity_b'], df.loc[ind_r,'velocity_change'])
-            df_meta.loc[ind,'velocity_c2'] = df_meta.loc[ind,'velocity'] - func(df_meta.loc[ind,'velocity_0'], *popt)
-            ind_r = (df['subj_idx'] == subj)&(df['velocity_b']<=0.005)
-            ind = (df_meta['subj_idx'] == subj)&(df_meta['velocity_0']<=0.005)&group&ind_clean_w
-            df_meta.loc[ind,'velocity_c2'] = df_meta.loc[ind,'velocity'] - df.loc[ind_r,'velocity_change'].mean()
-
+            try:
+                ind_r = (df['subj_idx'] == subj)&(df['velocity_b']>0.005)
+                ind = (df_meta['subj_idx'] == subj)&(df_meta['velocity_0']>0.005)&group&ind_clean_w
+                popt, pcov = curve_fit(func, df.loc[ind_r,'velocity_b'], df.loc[ind_r,'velocity_change'])
+                df_meta.loc[ind,'velocity_c2'] = df_meta.loc[ind,'velocity'] - func(df_meta.loc[ind,'velocity_0'], *popt)
+                ind_r = (df['subj_idx'] == subj)&(df['velocity_b']<=0.005)
+                ind = (df_meta['subj_idx'] == subj)&(df_meta['velocity_0']<=0.005)&group&ind_clean_w
+                df_meta.loc[ind,'velocity_c2'] = df_meta.loc[ind,'velocity'] - df.loc[ind_r,'velocity_change'].mean()
+            except:
+                pass
+        
         # plt.figure()
         # plt.scatter(df_meta.loc[group&ind_clean_w,'velocity'], df_meta.loc[group&ind_clean_w,'velocity_c'])
         # plt.figure()
@@ -1077,9 +1120,13 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
         func = linear
 
         # plot:
-        fig9, fig10 = plot_reversion_to_mean_correction(df.loc[df['velocity_b']>0.005,:], measure='walk', bin_measure='velocity', func=func)
-        fig11, fig12 = plot_reversion_to_mean_correction(df.loc[df['velocity_b']<=0.005,:], measure='walk', bin_measure='velocity', func=func)
-        
+        fig1, fig2 = plot_reversion_to_mean_correction(df.loc[df['velocity_b']>0.005,:], measure='walk', bin_measure='velocity', func=func)
+        figs.append(fig1)
+        figs.append(fig2)
+        fig1, fig2 = plot_reversion_to_mean_correction(df.loc[df['velocity_b']<=0.005,:], measure='walk', bin_measure='velocity', func=func)
+        figs.append(fig1)
+        figs.append(fig2)
+
         # uncorrected:
         df_meta.loc[group, 'walk'] = (df_meta.loc[group, 'velocity_1'] > velocity_cutoff[1]).astype(int)
 
@@ -1099,14 +1146,17 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
         df_meta.loc[group, 'walk_c2'] = np.repeat(np.NaN, df_meta.loc[group,:].shape[0])
         nr_subjects = 0
         for subj in df_meta.loc[group&ind_clean_w,'subj_idx'].unique():
-            ind_r = (df['subj_idx'] == subj)&(df['walk_b']>0.005)
-            ind = (df_meta['subj_idx'] == subj)&(df_meta['walk_0']>0.005)&group&ind_clean_w
-            popt, pcov = curve_fit(func, df.loc[ind_r,'walk_b'], df.loc[ind_r,'walk_change'])
-            df_meta.loc[ind,'walk_c2'] = df_meta.loc[ind,'walk'] - func(df_meta.loc[ind,'walk_0'], *popt)
-            ind_r = (df['subj_idx'] == subj)&(df['walk_b']<=0.005)
-            ind = (df_meta['subj_idx'] == subj)&(df_meta['walk_0']<=0.005)&group&ind_clean_w
-            df_meta.loc[ind,'walk_c2'] = df_meta.loc[ind,'walk'] - df.loc[ind_r,'walk_change'].mean()
-
+            try:
+                ind_r = (df['subj_idx'] == subj)&(df['walk_b']>0.005)
+                ind = (df_meta['subj_idx'] == subj)&(df_meta['walk_0']>0.005)&group&ind_clean_w
+                popt, pcov = curve_fit(func, df.loc[ind_r,'walk_b'], df.loc[ind_r,'walk_change'])
+                df_meta.loc[ind,'walk_c2'] = df_meta.loc[ind,'walk'] - func(df_meta.loc[ind,'walk_0'], *popt)
+                ind_r = (df['subj_idx'] == subj)&(df['walk_b']<=0.005)
+                ind = (df_meta['subj_idx'] == subj)&(df_meta['walk_0']<=0.005)&group&ind_clean_w
+                df_meta.loc[ind,'walk_c2'] = df_meta.loc[ind,'walk'] - df.loc[ind_r,'walk_change'].mean()
+            except:
+                pass
+        
         # plt.figure()
         # plt.scatter(df_meta.loc[group&ind_clean_w,'walk'], df_meta.loc[group&ind_clean_w,'walk_c'])
         # plt.figure()
@@ -1114,18 +1164,14 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
         # plt.figure()
         # plt.scatter(df_meta.loc[group&ind_clean_w,'walk_c'], df_meta.loc[group&ind_clean_w,'walk_c2'])
 
-        return df_meta, (fig1, fig2, fig3, fig4, fig5, fig6, fig7, fig8, fig9, fig10, fig11, fig12)
-
-    else:
-
-        return df_meta, (fig1, fig2, fig3, fig4)
+    return df_meta, figs
 
 
 def process_meta_data(file_meta, stim_overview, cuff_type, subj, session, fig_dir):
 
     bad_session = False
 
-    df_stim, frames, pulses, stim_si = load_stim_parameters(file_meta)
+    df_meta, frames, pulses, stim_si = load_stim_parameters(file_meta)
 
     # add intended params:
     try:
@@ -1136,11 +1182,11 @@ def process_meta_data(file_meta, stim_overview, cuff_type, subj, session, fig_di
         stim_overview_ses = stim_overview.loc[(stim_overview['subject']==subj)&(stim_overview['session']==int(session[:-1])),:]
 
     # check if workable session:
-    if not df_stim.shape[0] == 60:
+    if not df_meta.shape[0] == 60:
         bad_session = True
         print('ERROR!!')
         print('Not 60 stimulations!')
-    if not len(np.unique(df_stim['rate'])) == 3:
+    if not len(np.unique(df_meta['rate'])) == 3:
         bad_session = True
         print('ERROR!!')
         print('Not 3 unique train rates!')
@@ -1157,41 +1203,41 @@ def process_meta_data(file_meta, stim_overview, cuff_type, subj, session, fig_di
         return pd.DataFrame([])
     else:
         
-        df_stim['subj_idx'] = subj
-        df_stim['session'] = session
-        df_stim['cuff_type'] = cuff_type
-        df_stim['width'] = np.round(df_stim['width']*1000,2)
-        df_stim['rate'] = df_stim['rate'].astype(int)
+        df_meta['subj_idx'] = subj
+        df_meta['session'] = session
+        df_meta['cuff_type'] = cuff_type
+        df_meta['width'] = np.round(df_meta['width']*1000,2)
+        df_meta['rate'] = df_meta['rate'].astype(int)
         
-        df_stim['ones'] = 1
-        counts = df_stim.groupby(['width', 'rate'])['ones'].sum()
+        df_meta['ones'] = 1
+        counts = df_meta.groupby(['width', 'rate'])['ones'].sum()
 
         # make bins!!
-        df_stim['width_bin'] = df_stim.groupby(['rate'])['width'].apply(pd.qcut, q=4, labels=False)
-        for b in np.unique(df_stim['width_bin']):
-            df_stim.loc[df_stim['width_bin']==b, 'width'] = round(df_stim.loc[df_stim['width_bin']==b, 'width'].median(), 4)
+        df_meta['width_bin'] = df_meta.groupby(['rate'])['width'].apply(pd.qcut, q=4, labels=False)
+        for b in np.unique(df_meta['width_bin']):
+            df_meta.loc[df_meta['width_bin']==b, 'width'] = round(df_meta.loc[df_meta['width_bin']==b, 'width'].median(), 4)
         # check if workable session:
-        if not len(np.unique(df_stim['width'])) == 4:
+        if not len(np.unique(df_meta['width'])) == 4:
             bad_session = True
             print('ERROR!!')
             print('Not 4 unique train widths!')
             return pd.DataFrame([])
-        df_stim['rate_bin'] = df_stim.groupby(['width'])['rate'].apply(pd.qcut, q=3, labels=False)
-        df_stim['amplitude_m_rank'] = df_stim['amplitude_m'].rank(method='first') # takes care of repeating values...
-        df_stim['amplitude_m_bin'] = df_stim.groupby(['width', 'rate'])['amplitude_m_rank'].apply(pd.qcut, q=5, labels=False,)
+        df_meta['rate_bin'] = df_meta.groupby(['width'])['rate'].apply(pd.qcut, q=3, labels=False)
+        df_meta['amplitude_m_rank'] = df_meta['amplitude_m'].rank(method='first') # takes care of repeating values...
+        df_meta['amplitude_m_bin'] = df_meta.groupby(['width', 'rate'])['amplitude_m_rank'].apply(pd.qcut, q=5, labels=False,)
         
         # step 1 -- determine leak fraction:
-        widths = np.unique(df_stim['width'])
-        ind = (df_stim['width']==widths[-2])|(df_stim['width']==widths[-1])
-        d = df_stim.loc[ind,:].groupby(['width', 'rate']).min().reset_index()
-        df_stim['amplitude_i_min'] = float(stim_overview_ses['stim'].iloc[0][0:3])
-        df_stim['amplitude_i_max'] = float(stim_overview_ses['stim'].iloc[0][-3:])
-        df_stim['amplitude_m_mean'] = d['amplitude_m'].mean()
-        df_stim['leak'] = 1 - (df_stim['amplitude_m_mean']/df_stim['amplitude_i_min'])
+        widths = np.unique(df_meta['width'])
+        ind = (df_meta['width']==widths[-2])|(df_meta['width']==widths[-1])
+        d = df_meta.loc[ind,:].groupby(['width', 'rate']).min().reset_index()
+        df_meta['amplitude_i_min'] = float(stim_overview_ses['stim'].iloc[0][0:3])
+        df_meta['amplitude_i_max'] = float(stim_overview_ses['stim'].iloc[0][-3:])
+        df_meta['amplitude_m_mean'] = d['amplitude_m'].mean()
+        df_meta['leak'] = 1 - (df_meta['amplitude_m_mean']/df_meta['amplitude_i_min'])
 
         # step 2 -- fit logistic functions:
-        X = np.array(df_stim.groupby(['width']).mean().reset_index()['width'])
-        y = np.array(df_stim.groupby(['width']).mean().reset_index()['amplitude_m'])
+        X = np.array(df_meta.groupby(['width']).mean().reset_index()['width'])
+        y = np.array(df_meta.groupby(['width']).mean().reset_index()['amplitude_m'])
         try:
             popt, pcov = curve_fit(fsigmoid, X, y, method='dogbox', bounds=([2, -0.75, y.max()/2],[20, 0.75, y.max()*2]))
             fit_success = True
@@ -1208,40 +1254,53 @@ def process_meta_data(file_meta, stim_overview, cuff_type, subj, session, fig_di
         # plt.show()
         
         popts = []
-        for b in np.unique(df_stim['amplitude_m_bin']):
+        for b in np.unique(df_meta['amplitude_m_bin']):
             if fit_success:
                 _popt, _pcov = curve_fit(lambda x, s: fsigmoid(x, popt[0], popt[1], s),
-                                            np.array(df_stim.loc[df_stim['amplitude_m_bin']==b,:].groupby(['width']).mean().reset_index()['width']), 
-                                            np.array(df_stim.loc[df_stim['amplitude_m_bin']==b,:].groupby(['width']).mean().reset_index()['amplitude_m']))
+                                            np.array(df_meta.loc[df_meta['amplitude_m_bin']==b,:].groupby(['width']).mean().reset_index()['width']), 
+                                            np.array(df_meta.loc[df_meta['amplitude_m_bin']==b,:].groupby(['width']).mean().reset_index()['amplitude_m']))
             else:
-                _popt = np.array([np.array(df_stim.loc[df_stim['amplitude_m_bin']==b,:].groupby(['width']).mean().reset_index()['amplitude_m']).mean()])
+                _popt = np.array([np.array(df_meta.loc[df_meta['amplitude_m_bin']==b,:].groupby(['width']).mean().reset_index()['amplitude_m']).mean()])
             popts.append(_popt)
 
         # step 3 -- correct for leak and filter:
-        df_stim['amplitude_c'] = 0
-        for i, b in enumerate(np.unique(df_stim['amplitude_m_bin'])):
-            for j, w in enumerate(np.unique(df_stim.loc[df_stim['amplitude_m_bin']==b, 'width'])):
-                ind = (df_stim['amplitude_m_bin']==b)&(df_stim['width']==w)
-                df_stim.loc[ind, 'amplitude_c'] = df_stim.loc[ind, 'amplitude_m'] + fsigmoid(widths[-1], popt[0], popt[1], popts[i]) - fsigmoid(w, popt[0], popt[1], popts[i])
-        df_stim.loc[:, 'amplitude_c'] = df_stim.loc[:, 'amplitude_c'] / (1 - df_stim['leak'].iloc[0])
+        df_meta['amplitude_c'] = 0
+        for i, b in enumerate(np.unique(df_meta['amplitude_m_bin'])):
+            for j, w in enumerate(np.unique(df_meta.loc[df_meta['amplitude_m_bin']==b, 'width'])):
+                ind = (df_meta['amplitude_m_bin']==b)&(df_meta['width']==w)
+                df_meta.loc[ind, 'amplitude_c'] = df_meta.loc[ind, 'amplitude_m'] + fsigmoid(widths[-1], popt[0], popt[1], popts[i]) - fsigmoid(w, popt[0], popt[1], popts[i])
+        df_meta.loc[:, 'amplitude_c'] = df_meta.loc[:, 'amplitude_c'] / (1 - df_meta['leak'].iloc[0])
         
         # step 4 -- compute saturation:
-        df_stim['saturation'] = df_stim['amplitude_i_max'].iloc[0] - df_stim.loc[df_stim['amplitude_m_bin']==max(df_stim['amplitude_m_bin']), 'amplitude_c'].mean()
+        df_meta['saturation'] = df_meta['amplitude_i_max'].iloc[0] - df_meta.loc[df_meta['amplitude_m_bin']==max(df_meta['amplitude_m_bin']), 'amplitude_c'].mean()
 
         # normalize before plotting:
-        df_stim['amplitude_c_norm'] = 0
-        for i, b in enumerate(np.unique(df_stim['amplitude_m_bin'])):
-            df_stim.loc[df_stim['amplitude_m_bin']==b, 'amplitude_c_norm'] = df_stim.loc[df_stim['amplitude_m_bin']==b, 'amplitude_c'] / df_stim.loc[df_stim['amplitude_m_bin']==b, 'amplitude_c'].mean()
+        df_meta['amplitude_c_norm'] = 0
+        for i, b in enumerate(np.unique(df_meta['amplitude_m_bin'])):
+            df_meta.loc[df_meta['amplitude_m_bin']==b, 'amplitude_c_norm'] = df_meta.loc[df_meta['amplitude_m_bin']==b, 'amplitude_c'] / df_meta.loc[df_meta['amplitude_m_bin']==b, 'amplitude_c'].mean()
 
-    fig = plot_param_preprocessing(df_stim, popt, popts)
+    # add trial nr:
+    df_meta['trial'] = np.arange(df_meta.shape[0])
+
+    # add charge:
+    df_meta['amplitude_bin'] = df_meta['amplitude_m_bin'].copy()
+    df_meta['amplitude'] = ((df_meta['amplitude_bin']+1)*0.2)-0.1
+    df_meta['width'] = (2**(df_meta['width_bin']+1))/20 
+    df_meta['charge'] = df_meta['amplitude']*df_meta['width']
+    df_meta['charge_ps'] = df_meta['amplitude']*df_meta['width']*df_meta['rate']
+    df_meta['charge_bin'] = df_meta.groupby(['subj_idx', 'session'])['charge'].apply(pd.qcut, q=5, labels=False)
+    df_meta['charge_ps_bin'] = df_meta.groupby(['subj_idx', 'session'])['charge_ps'].apply(pd.qcut, q=5, labels=False)
+
+    # plot
+    fig = plot_param_preprocessing(df_meta, popt, popts)
     fig.savefig(os.path.join(fig_dir, 'preprocess', 'stimulation_params_{}_{}.png'.format(subj, session)))
 
-    return df_stim
+    return df_meta
 
 def process_walk_data(file_tdms, fs_resample='2L'):
 
     # # load stim data:
-    # df_stim, frames, pulses, stim_si = load_stim_parameters(file_meta)
+    # df_meta, frames, pulses, stim_si = load_stim_parameters(file_meta)
     # frame_times = pulses * stim_si
 
     # load velocity:
@@ -1279,7 +1338,7 @@ def process_eye_data(file_meta, file_tdms, file_pupil, subj, ses, fig_dir, use_d
     if file_meta.split('.')[-1] == 'txt':
         frames = np.loadtxt(file_meta).astype(int)
     else:
-        df_stim, frames, pulses, stim_si = load_stim_parameters(file_meta)
+        df_meta, frames, pulses, stim_si = load_stim_parameters(file_meta)
     
     # frames must be in ascending order:
     frames = frames[np.concatenate((np.array([True]), np.diff(frames)>=0))]
@@ -1397,17 +1456,17 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
     print((subj, ses))
 
     ### GET META DATA ###
-    df_stim, frames, pulses, stim_si = load_stim_parameters(file_meta)
-    if df_stim.shape[0] == 0:
+    df_meta, frames, pulses, stim_si = load_stim_parameters(file_meta)
+    if df_meta.shape[0] == 0:
         return [pd.DataFrame([]) for _ in range(7)]
-    df_stim['subj_idx'] = subj
-    df_stim['session'] = ses
-    df_stim['cuff_type'] = cuff_type
-    df_stim['width'] = np.round(df_stim['width']*1000,2)
-    df_stim['rate'] = df_stim['rate'].astype(int)
-    df_stim['amplitude_m_bin'] = pd.qcut(df_stim['amplitude_m'], 1, labels=False)
-    df_stim['width_bin'] = pd.qcut(df_stim['width'], 1, labels=False)
-    df_stim['rate_bin'] = pd.qcut(df_stim['rate'], 1, labels=False)
+    df_meta['subj_idx'] = subj
+    df_meta['session'] = ses
+    df_meta['cuff_type'] = cuff_type
+    df_meta['width'] = np.round(df_meta['width']*1000,2)
+    df_meta['rate'] = df_meta['rate'].astype(int)
+    df_meta['amplitude_m_bin'] = pd.qcut(df_meta['amplitude_m'], 1, labels=False)
+    df_meta['width_bin'] = pd.qcut(df_meta['width'], 1, labels=False)
+    df_meta['rate_bin'] = pd.qcut(df_meta['rate'], 1, labels=False)
     
     ### GET WALKING DATA ###
     df_walk = process_walk_data(file_tdms, fs_resample=fs_resample)
@@ -1419,12 +1478,12 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
 
     # make epochs:
     fs = 50
-    epochs_v = utils.make_epochs(df_walk, df_stim, locking='time', start=-60, dur=120, measure='distance', fs=fs)
-    epochs_p = utils.make_epochs(df_eye, df_stim, locking='time', start=-60, dur=120, measure='pupil_int_lp_frac', fs=fs)
-    epochs_l = utils.make_epochs(df_eye, df_stim, locking='time', start=-60, dur=120, measure='eyelid_int_lp_frac', fs=fs)
-    epochs_x = utils.make_epochs(df_eye, df_stim, locking='time', start=-60, dur=120, measure='x_z', fs=fs)
-    epochs_y = utils.make_epochs(df_eye, df_stim, locking='time', start=-60, dur=120, measure='y_z', fs=fs)
-    epochs_b = utils.make_epochs(df_eye, df_stim, locking='time', start=-60, dur=120, measure='is_blink', fs=fs)
+    epochs_v = utils.make_epochs(df_walk, df_meta, locking='time', start=-60, dur=120, measure='distance', fs=fs)
+    epochs_p = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='pupil_int_lp_frac', fs=fs)
+    epochs_l = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='eyelid_int_lp_frac', fs=fs)
+    epochs_x = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='x_z', fs=fs)
+    epochs_y = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='y_z', fs=fs)
+    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='is_blink', fs=fs)
     
     xmax = min((max(df_eye['time']/60), max(df_walk['time']/60)))
 
@@ -1440,7 +1499,7 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
 
         ax = plt.subplot2grid((7, 6), (row, 0), colspan=4)
         ax.plot(df['time']/60, df[measure]) 
-        for p in np.array(df_stim['time']/60):
+        for p in np.array(df_meta['time']/60):
             ax.axvline(p, color='r', lw=0.5)
         plt.xlim(left=0, right=xmax)
         plt.ylabel(measure)
@@ -1457,7 +1516,7 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
                 pass
         ax = plt.subplot2grid((7, 6), (row, 5))
 
-        for i, p in enumerate(df_stim['time']):
+        for i, p in enumerate(df_meta['time']):
             ind = (df['time']>(p-10)) & (df['time']<(p+20))
             resp = np.array(df.loc[ind, measure])
             if (measure == 'pupil_int_lp_frac') | (measure == 'eyelid_int_lp_frac') | (measure == 'x_z') | (measure == 'y_z') | (measure == 'distance'):
@@ -1468,7 +1527,7 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
                 baseline = float(df.loc[ind_b, measure].mean())
                 resp = resp - baseline
             x = np.linspace(-10,20,len(resp))
-            color = sns.dark_palette("red", 5)[int(df_stim['amplitude_m_bin'].iloc[i])]
+            color = sns.dark_palette("red", 5)[int(df_meta['amplitude_m_bin'].iloc[i])]
             if (measure == 'pupil_int_lp_frac') | (measure == 'eyelid_int_lp_frac') | (measure == 'x_z') | (measure == 'y_z'):
                 if df.loc[ind, 'is_blink'].mean() < 0.1:
                     plt.plot(x[::10], resp[::10], color=color, lw=0.5, alpha=0.25)
@@ -1484,7 +1543,7 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
     
     plt.close('all')
 
-    return df_stim, epochs_v, epochs_p, epochs_l, epochs_x, epochs_y, epochs_b
+    return df_meta, epochs_v, epochs_p, epochs_l, epochs_x, epochs_y, epochs_b
 
 def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cuff_type, stim_overview, fs_resample='20L'):
 
@@ -1498,8 +1557,8 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
     print((subj, ses))
 
     ### GET META DATA ###
-    df_stim = process_meta_data(file_meta, stim_overview, cuff_type, subj, ses, fig_dir)
-    if df_stim.shape[0] == 0:
+    df_meta = process_meta_data(file_meta, stim_overview, cuff_type, subj, ses, fig_dir)
+    if df_meta.shape[0] == 0:
         return [pd.DataFrame([]) for _ in range(7)]
 
     ### GET WALKING DATA ###
@@ -1512,12 +1571,12 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
 
     # make epochs:
     fs = 50
-    epochs_v = utils.make_epochs(df_walk, df_stim, locking='time', start=-60, dur=120, measure='distance', fs=fs)
-    epochs_p = utils.make_epochs(df_eye, df_stim, locking='time', start=-60, dur=120, measure='pupil_int_lp_frac', fs=fs)
-    epochs_l = utils.make_epochs(df_eye, df_stim, locking='time', start=-60, dur=120, measure='eyelid_int_lp_frac', fs=fs)
-    epochs_x = utils.make_epochs(df_eye, df_stim, locking='time', start=-60, dur=120, measure='x_z', fs=fs)
-    epochs_y = utils.make_epochs(df_eye, df_stim, locking='time', start=-60, dur=120, measure='y_z', fs=fs)
-    epochs_b = utils.make_epochs(df_eye, df_stim, locking='time', start=-60, dur=120, measure='is_blink', fs=fs)
+    epochs_v = utils.make_epochs(df_walk, df_meta, locking='time', start=-60, dur=120, measure='distance', fs=fs)
+    epochs_p = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='pupil_int_lp_frac', fs=fs)
+    epochs_l = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='eyelid_int_lp_frac', fs=fs)
+    epochs_x = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='x_z', fs=fs)
+    epochs_y = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='y_z', fs=fs)
+    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='is_blink', fs=fs)
 
     xmax = min((max(df_eye['time']/60), max(df_walk['time']/60)))
 
@@ -1533,7 +1592,7 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
 
         ax = plt.subplot2grid((7, 6), (row, 0), colspan=4)
         ax.plot(df['time']/60, df[measure]) 
-        for p in np.array(df_stim['time']/60):
+        for p in np.array(df_meta['time']/60):
             ax.axvline(p, color='r', lw=0.5)
         plt.xlim(left=0, right=xmax)
         plt.ylabel(measure)
@@ -1550,7 +1609,7 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
                 pass
         ax = plt.subplot2grid((7, 6), (row, 5))
 
-        for i, p in enumerate(df_stim['time']):
+        for i, p in enumerate(df_meta['time']):
             ind = (df['time']>(p-10)) & (df['time']<(p+20))
             resp = np.array(df.loc[ind, measure])
             if (measure == 'pupil_int_lp_frac') | (measure == 'eyelid_int_lp_frac') | (measure == 'x_z') | (measure == 'y_z') | (measure == 'distance'):
@@ -1561,7 +1620,7 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
                 baseline = float(df.loc[ind_b, measure].mean())
                 resp = resp - baseline
             x = np.linspace(-10,20,len(resp))
-            color = sns.dark_palette("red", 5)[int(df_stim['amplitude_m_bin'].iloc[i])]
+            color = sns.dark_palette("red", 5)[int(df_meta['amplitude_m_bin'].iloc[i])]
             if (measure == 'pupil_int_lp_frac') | (measure == 'eyelid_int_lp_frac') | (measure == 'x_z') | (measure == 'y_z'):
                 if df.loc[ind, 'is_blink'].mean() < 0.1:
                     plt.plot(x[::10], resp[::10], color=color, lw=0.5, alpha=0.25)
@@ -1579,12 +1638,12 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
 
     # # save stuff:
     # leak_cut_off = 0.25
-    # if (df_stim['session_amp_leak'].iloc[0]>=0)&(df_stim['session_amp_leak'].iloc[0]<leak_cut_off):
+    # if (df_meta['session_amp_leak'].iloc[0]>=0)&(df_meta['session_amp_leak'].iloc[0]<leak_cut_off):
     #     dd = pd.merge(df_walk, df_eye.loc[:,['time', 'pupil', 'pupil_int_lp_frac']], on='time')
     #     dd = dd.rename(columns={'pupil_int_lp_frac': 'pupil'})
     #     dd.to_csv('/media/external2/forMatt/{}_{}.csv'.format(subj, ses))
     
-    return df_stim, epochs_v, epochs_p, epochs_l, epochs_x, epochs_y, epochs_b
+    return df_meta, epochs_v, epochs_p, epochs_l, epochs_x, epochs_y, epochs_b
 
 def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resample='20L'):
 
@@ -1598,11 +1657,11 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     time = utils.get_image_timestamps_tdms(file_tdms)
 
     ### get pulses:
-    df_stim = utils.get_vns_timestamps_tdms(file_tdms)
-    df_stim['width'] = df_stim['width'].round(1)
-    df_stim['rate'] = df_stim['rate'].astype(int)+1
-    df_stim['amplitude_bin'] = pd.cut(df_stim['amplitude'], bins=np.array([0,0.2,0.4,0.6,0.8,1]), labels=False,)
-    df_stim['amplitude'] = np.round((df_stim['amplitude_bin']*0.2)+0.1,1)
+    df_meta = utils.get_vns_timestamps_tdms(file_tdms)
+    df_meta['width'] = df_meta['width'].round(1)
+    df_meta['rate'] = df_meta['rate'].astype(int)+1
+    df_meta['amplitude_bin'] = pd.cut(df_meta['amplitude'], bins=np.array([0,0.2,0.4,0.6,0.8,1]), labels=False,)
+    df_meta['amplitude'] = np.round((df_meta['amplitude_bin']*0.2)+0.1,1)
     
     ### GET WALKING DATA ###
     df_walk = process_walk_data(file_tdms, fs_resample=fs_resample)
@@ -1654,14 +1713,15 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
 
     # make epochs:
     fs = 50
-    df_stim['time2'] = df_stim['time']-5
-    epochs_x = utils.make_epochs(df=df_motion, df_meta=df_stim, locking='time', start=-10, dur=30, measure='xoff', fs=fs,)
-    epochs_y = utils.make_epochs(df=df_motion, df_meta=df_stim, locking='time', start=-10, dur=30, measure='yoff', fs=fs,)
-    epochs_w = utils.make_epochs(df=df_walk, df_meta=df_stim, locking='time', start=-10, dur=30, measure='distance', fs=fs,)
-    epochs_v = utils.make_epochs(df_walk, df_stim, locking='time', start=-60, dur=120, measure='distance', fs=fs)
-    epochs_p = utils.make_epochs(df_eye, df_stim, locking='time2', start=-60, dur=120, measure='pupil_int_lp_frac', fs=fs)
-    epochs_l = utils.make_epochs(df_eye, df_stim, locking='time2', start=-60, dur=120, measure='eyelid_int_lp_frac', fs=fs)
-    epochs_b = utils.make_epochs(df_eye, df_stim, locking='time2', start=-60, dur=120, measure='is_blink', fs=fs)
+    df_meta['time2'] = df_meta['time']-5
+    epochs_x = utils.make_epochs(df=df_motion, df_meta=df_meta, locking='time', start=-60, dur=120, measure='xoff', fs=fs,)
+    epochs_y = utils.make_epochs(df=df_motion, df_meta=df_meta, locking='time', start=-60, dur=120, measure='yoff', fs=fs,)
+    epochs_corr = utils.make_epochs(df=df_motion, df_meta=df_meta, locking='time', start=-60, dur=120, measure='corrXY', fs=fs,)
+    epochs_w = utils.make_epochs(df=df_walk, df_meta=df_meta, locking='time', start=-60, dur=120, measure='distance', fs=fs,)
+    epochs_v = utils.make_epochs(df_walk, df_meta, locking='time', start=-60, dur=120, measure='distance', fs=fs)
+    epochs_p = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='pupil_int_lp_frac', fs=fs)
+    epochs_l = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='eyelid_int_lp_frac', fs=fs)
+    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='is_blink', fs=fs)
 
     # fluorescence:
     f = np.load(os.path.join('/media/internal1/vns/', subj, ses, 'F.npy'))
@@ -1677,63 +1737,96 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     fluorescence = fluorescence.resample(fs_resample).mean().interpolate('linear').reset_index()
     fluorescence['time'] = pd.to_timedelta(fluorescence['index']).dt.total_seconds() 
     fluorescence = fluorescence.drop(labels=['index'], axis=1)
-
+    
     # preprocess:
-    fluorescence['F2'] = utils._butter_lowpass_filter(fluorescence['F'], highcut=3, fs=fs, order=3)
-    fluorescence['F2'] = ((fluorescence['F2'] - np.percentile(fluorescence['F2'], 0.01)) / 
-                            (np.percentile(fluorescence['F2'], 99.9) - np.percentile(fluorescence['F2'], 0.01)))
+    fluorescence['F0'] = utils._butter_lowpass_filter(fluorescence['F'], highcut=3, fs=fs, order=3)
 
-    x = fluorescence['time']
-    f = fluorescence['F2']
 
-    # (subj == 'C1772') & (session == 7)
-    # (subj == 'C1773') & (session == 6)
-    # (subj == 'C1773') & (session == 8)
+    if (subj=='C1772')&(ses=='7'):
+        split = np.array([-1, 1900, 10000])
+    elif (subj=='C1773')&(ses=='8'):
+        split = np.array([-1, 1700, 10000])
+    elif (subj=='C1773')&(ses=='10'):
+        split = np.array([-1, 1200, 10000])
+    else:
+        split = np.array([-1, 10000])
 
-    # linear detrend:
-    func = linear
-    popt, pcov = curve_fit(func, x, f,)
-    f_filt = f - func(x, *popt)
-    scaler_orig = func(x, *popt)
-    scaler = (max(scaler_orig) - scaler_orig) / max(scaler_orig)
 
-    # # highpass detrend:
-    # f_filt = utils._butter_highpass_filter(f, lowcut=0.001, fs=fs, order=3)
-    # scaler_orig = f-f_filt
-    # scaler = (max(scaler_orig) - scaler_orig) / max(scaler_orig)
+    #FIXME: remove iterative aspect -- interpolate between baselines -- low pass filter
+    # # mask pulse:
+    # fluorescence['Fm'] = fluorescence['F'].copy() 
+    # for t in df_meta['time']:
+    #     ind = (fluorescence['time']>(t))&(fluorescence['time']<(t+60))
+    #     fluorescence.loc[ind, 'Fm'] = np.NaN
+    # fluorescence['Fm'] = fluorescence['Fm'].interpolate('linear')
+    # fluorescence['Fmf'] = utils._butter_lowpass_filter(fluorescence['Fm'], highcut=0.01, fs=fs, order=3)
+    # plt.plot(fluorescence['F'])
+    # plt.plot(fluorescence['Fm'])
+    # plt.plot(fluorescence['Fmf'])
 
-    f_corrected = f_filt + (f_filt * scaler)
-    f_corrected = utils._butter_lowpass_filter(f_corrected, highcut=6, fs=fs, order=3)
-    f_corrected = ((f_corrected - np.percentile(f_corrected, 0.01)) / 
-                            (np.percentile(f_corrected, 99.9) - np.percentile(f_corrected, 0.01)))
-    fluorescence['F'] = f_corrected
+    step = 0
+
+    epochs_c = utils.make_epochs(df=fluorescence, df_meta=df_meta, locking='time', start=-60, dur=120, measure='F{}'.format(step), fs=fs,)
+    epochs_t = utils.make_epochs(df=fluorescence, df_meta=df_meta, locking='time', start=-60, dur=120, measure='time', fs=fs,)
+    x = np.array(epochs_c.columns, dtype=float)
+    ind_b = (x>-60)&(x<0)
+    baselines = epochs_c.loc[:,ind_b].mean(axis=1)
+    times = epochs_t.loc[:,ind_b].mean(axis=1)
+
+    for i in range(len(split)-1):
+        
+
+        ind = (fluorescence['time']>=split[i])&(fluorescence['time']<split[i+1])
+        ind2 = (times>=split[i])&(times<split[i+1])
+
+        x = times[ind2]
+        y = baselines[ind2]
+        func = linear
+        popt, pcov = curve_fit(func, x, y,)
+
+        x = fluorescence.loc[ind,'time']
+        scaler_orig = func(x, *popt)
+        scaler = max(scaler_orig) / scaler_orig
+        print(scaler.iloc[-1])
+
+        f = fluorescence.loc[ind,'F{}'.format(step)]
+        f_corrected = f - scaler_orig + (f * scaler)
+        f_corrected = utils._butter_lowpass_filter(f_corrected, highcut=6, fs=fs, order=3)
+        # f_corrected = ((f_corrected - np.percentile(f_corrected, 0.01)) / 
+        #                         (np.percentile(f_corrected, 99.9) - np.percentile(f_corrected, 0.01)))
+        
+        fluorescence.loc[ind, 'F{}'.format(step+1)] = f_corrected
+        fluorescence.loc[ind, 'scaler_orig'] = scaler_orig
 
     fig = plt.figure(figsize=(6,9))
-    ax = fig.add_subplot(311)
-    plt.plot(x,f)
-    plt.plot(x, scaler_orig, color='k', ls='-', zorder=10)
-    ax = fig.add_subplot(312)
-    plt.plot(x,f_filt)
-    ax = fig.add_subplot(313)
-    plt.plot(x,f_corrected)
+    ax = fig.add_subplot(211)
+    plt.plot(fluorescence['time'], fluorescence['F{}'.format(step)])
+    plt.plot(fluorescence['time'], fluorescence['scaler_orig'], color='k', ls='-', zorder=10)
+    ax = fig.add_subplot(212)
+    plt.plot(fluorescence['time'], fluorescence['F{}'.format(step+1)])
     plt.tight_layout()
     fig.savefig(os.path.join(fig_dir, 'preprocess', 'preprocess_calcium_{}_{}.png'.format(subj, ses)), dpi=300)
 
+    # update:
+    fluorescence['F'] = fluorescence['F1']
+    fluorescence['F'] = ((fluorescence['F'] - np.percentile(fluorescence['F'], 0.01)) / 
+                            (np.percentile(fluorescence['F'], 99.9) - np.percentile(fluorescence['F'], 0.01)))
+
+    # summary figure: 
+    fig = preprocess_calcium.fig_image_quality(ops['refImg'], ops['meanImg'], df_motion.iloc[::10], fluorescence.iloc[::10], df_eye.iloc[::10], df_walk.iloc[::10], zoom, subj, ses, df_meta)
+    fig.savefig(os.path.join(fig_dir, 'preprocess', 'preprocess_{}_{}_a.pdf'.format(subj, ses)), dpi=300)
+
     # epochs:
-    epochs_c = utils.make_epochs(df=fluorescence, df_meta=df_stim, locking='time', start=-10, dur=30, measure='F', fs=fs,)
+    epochs_c = utils.make_epochs(df=fluorescence, df_meta=df_meta, locking='time', start=-60, dur=120, measure='F', fs=fs,)
     # epochs_c = pd.read_hdf(os.path.join('/media/internal1/vns/', subj, ses, 'epochs_c.hdf'))
     epochs_c['cell'] = np.ones(epochs_c.shape[0])
-    epochs_c['amplitude'] = np.array(df_stim['amplitude'])
-    epochs_c['rate'] = np.array(df_stim['rate'])
-    epochs_c['width'] = np.array(df_stim['width'])
+    epochs_c['amplitude'] = np.array(df_meta['amplitude'])
+    epochs_c['rate'] = np.array(df_meta['rate'])
+    epochs_c['width'] = np.array(df_meta['width'])
     epochs_c['subj_idx'] = subj
     epochs_c['session'] = ses
     epochs_c['trial'] = np.arange(epochs_c.shape[0]) 
     epochs_c = epochs_c.set_index(['subj_idx', 'session', 'trial', 'cell', 'amplitude', 'rate', 'width'])
-
-    # summary figure: 
-    fig = preprocess_calcium.fig_image_quality(ops['refImg'], ops['meanImg'], df_motion.iloc[::10], fluorescence.iloc[::10], df_eye.iloc[::10], df_walk.iloc[::10], zoom, subj, ses, df_stim)
-    fig.savefig(os.path.join(fig_dir, 'preprocess', 'preprocess_{}_{}_a.pdf'.format(subj, ses)), dpi=300)
 
     # fig = plt.figure(figsize=(4,2))
     # ax = fig.add_subplot(121)
@@ -1754,7 +1847,7 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     # })
     # d.to_csv(os.path.join(fig_dir, 'preprocess', 'preprocess_{}_{}.csv'.format(subj, ses)))
 
-    # inds = ((df_stim['time'] - float(time.iloc[0])) * fs).astype(int)
+    # inds = ((df_meta['time'] - float(time.iloc[0])) * fs).astype(int)
     # inds.to_csv(os.path.join(fig_dir, 'preprocess', 'preprocess_{}_{}_indices.csv'.format(subj, ses)))
 
     # # cells:
@@ -1804,11 +1897,11 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     #     for i in range(fluorescence.shape[0]):
     #         df = fluorescence.iloc[i,:].reset_index()
     #         df.columns = ['time', 'F']
-    #         epoch = utils.make_epochs(df=df, df_meta=df_stim, locking='time', start=-10, dur=30, measure='F', fs=fs,)
+    #         epoch = utils.make_epochs(df=df, df_meta=df_meta, locking='time', start=-10, dur=30, measure='F', fs=fs,)
     #         epoch['cell'] = (np.ones(epoch.shape[0]) * i).astype(int)
-    #         epoch['amplitude'] = np.array(df_stim['amplitude_b'])
-    #         epoch['rate'] = np.array(df_stim['rate'])
-    #         epoch['width'] = np.array(df_stim['width'])
+    #         epoch['amplitude'] = np.array(df_meta['amplitude_b'])
+    #         epoch['rate'] = np.array(df_meta['rate'])
+    #         epoch['width'] = np.array(df_meta['width'])
     #         epoch['subj_idx'] = subj
     #         epoch['session'] = ses
     #         epoch['trial'] = np.arange(epoch.shape[0]) 
@@ -1828,7 +1921,7 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     #     for i in range(fluorescence.shape[0]):
     #         ax.plot(time/60, fluorescence.iloc[i]+offset, alpha=0.75, color=colors[i])
     #         offset += np.percentile(np.array(fluorescence).ravel(), 99)
-    #     for t in df_stim['time']:
+    #     for t in df_meta['time']:
     #         plt.axvline(t/60, lw=0.5, color='r')
     #     plt.ylabel('Fluorescence')
     #     plt.xlabel('Time (min)')
@@ -1837,7 +1930,7 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     #     ax = plt.subplot(gs[0:1,4:5])
     #     offset = 0
     #     for i in range(fluorescence.shape[0]):
-    #         for p in df_stim['time']:
+    #         for p in df_meta['time']:
     #             ind = (fluorescence.columns>(p-10)) & (fluorescence.columns<(p+20))
     #             ind_b = (fluorescence.columns>(p-5.5)) & (fluorescence.columns<(p+0.5))
     #             resp = fluorescence.iloc[i,ind] - fluorescence.iloc[i,ind_b].mean()
@@ -1853,6 +1946,6 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     #     plt.tight_layout()
     #     fig.savefig(os.path.join(fig_dir, 'vns_{}_{}_session.pdf'.format(subj, ses)))
         
-    return epochs_c, epochs_x, epochs_y, epochs_v, epochs_p, epochs_l, epochs_b
+    return epochs_c, epochs_x, epochs_y, epochs_corr, epochs_v, epochs_p, epochs_l, epochs_b
 
 

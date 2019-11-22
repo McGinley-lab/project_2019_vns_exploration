@@ -42,6 +42,15 @@ subjects = {
 #     'C1772': ['7'],
 # }
 
+subjects = {
+    'C7A2': ['1',],
+    'C7A6': ['1', '7', '8',],  
+    'C1772': ['6', '7', '8',],
+    'C1773': ['5', '6', '7', '8', '10'],
+    # 'C1772': ['7'],
+}
+
+
 raw_dir = '/media/external4/2p_imaging/vns/'
 temp_dir = '/media/internal1/vns/'
 
@@ -51,9 +60,9 @@ default_size = 512 # in pixels
 maxregshift = 20 # in micron
 maxregshift_std = 4 # in micron
 
-run_suite2p = True
-plotting = True
-merging = False
+run_suite2p = 0
+plotting = 1
+merging = 0
 
 errors = []
 for subj in subjects.keys():

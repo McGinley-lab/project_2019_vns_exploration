@@ -1,6 +1,7 @@
 import os, sys
 import glob
 import numpy as np
+import scipy as sp
 from scipy.optimize import curve_fit
 import pandas as pd
 import matplotlib
@@ -100,14 +101,12 @@ epochs_b = pd.read_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
 df_meta = pd.read_csv(os.path.join(data_dir, 'meta_data.csv'))
 print('finished loading data')
 
-# add charge:
-df_meta['amplitude_bin'] = df_meta['amplitude_m_bin'].copy()
-df_meta['amplitude'] = ((df_meta['amplitude_bin']+1)*0.2)-0.1
-df_meta['width'] = (2**(df_meta['width_bin']+1))/20 
-df_meta['charge'] = df_meta['amplitude']*df_meta['width']
-df_meta['charge_ps'] = df_meta['amplitude']*df_meta['width']*df_meta['rate']
-df_meta['charge_bin'] = df_meta.groupby(['subj_idx', 'session'])['charge'].apply(pd.qcut, q=5, labels=False)
-df_meta['charge_ps_bin'] = df_meta.groupby(['subj_idx', 'session'])['charge_ps'].apply(pd.qcut, q=5, labels=False)
+# round:
+df_meta['amplitude'] = np.round(df_meta['amplitude'], 3)
+df_meta['width'] = np.round(df_meta['width'], 3)
+df_meta['rate'] = np.round(df_meta['rate'], 3)
+df_meta['charge'] = np.round(df_meta['charge'], 3)
+df_meta['charge_ps'] = np.round(df_meta['charge_ps'], 3)
 
 # plot charges:
 fig = vns_analyses.plot_pupil_responses_matrix_()
@@ -369,11 +368,31 @@ df['charge'] = np.round(df['charge'],3)
 df['amplitude'] = np.round(df['amplitude'],3)
 df.to_csv(os.path.join(fig_dir, 'data_exploration.csv'))
 
-shell()
-
 # 3d plot:
 fig = vns_analyses.hypersurface(df_meta.loc[ind_u & (df_meta['cuff_type']=='intact'),:].reset_index(), z_measure='pupil_c')
 fig.savefig(os.path.join(fig_dir, '3d_surface_pupil.pdf'))
+
+# variance explained charge:
+ind = (df_meta['cuff_type'] == 'intact') & ind_u
+x = np.array(df_meta.loc[ind,['charge', 'rate']])
+y = np.array(df_meta.loc[ind,['pupil_c']]).ravel()
+func = vns_analyses.log_logistic_3d
+popt, pcov = curve_fit(func, x, y, 
+                method='dogbox', bounds=([0, 0, 0, 0, 0,], [np.inf, np.inf, np.inf, np.inf, np.inf,]))
+predictions = func(x, *popt) 
+r2 = (sp.stats.pearsonr(y, predictions)[0]**2) * 100
+print(r2)
+
+for ind, title in zip([ind_u, ind_g,], ['u', 'g',]):
+    fig = vns_analyses.plot_param_preprocessing(df_meta.loc[ind,:])
+    fig.savefig(os.path.join(fig_dir, 'preprocess', 'average_{}.pdf'.format(title)))   
+
+for cuff_type in ['intact', 'single', 'double']:
+    for ind, title in zip([ind_u, ind_g,], ['u', 'g',]):
+        cuff_ind = np.array(df_meta['cuff_type'] == cuff_type)
+        ind = ind & cuff_ind
+        fig = vns_analyses.plot_param_preprocessing(df_meta.loc[ind,:])
+        fig.savefig(os.path.join(fig_dir, 'preprocess', 'average_{}_{}.pdf'.format(title, cuff_type,)))
 
 # time courses:
 # -------------
@@ -409,400 +428,18 @@ for measure in ['pupil', 'velocity', 'walk', 'eyelid',]:
 
             for measure_ext in ['', '_c', '_c2']:
                 
-                fig = vns_analyses.plot_scalars(df_meta.loc[ind, :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
+                fig = vns_analyses.plot_scalars(df_meta.loc[ind &  ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
                 fig.savefig(os.path.join(fig_dir, measure, title, 'scalars_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
                 
-                fig = vns_analyses.plot_scalars2(df_meta.loc[ind, :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
+                fig = vns_analyses.plot_scalars2(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
                 fig.savefig(os.path.join(fig_dir, measure, title, 'scalars2_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
-                
-                fig = vns_analyses.plot_scalars3(df_meta.loc[ind, :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
+
+                fig = vns_analyses.plot_scalars3(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
                 fig.savefig(os.path.join(fig_dir, measure, title, 'scalars3_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
 
                 try:
-                    fig = vns_analyses.plot_pupil_responses_matrix(df_meta.loc[ind, :], measure=measure+measure_ext, vmin=-ylim[1], vmax=ylim[1])
+                    fig = vns_analyses.plot_pupil_responses_matrix(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, vmin=-ylim[1], vmax=ylim[1])
                     fig.savefig(os.path.join(fig_dir, measure, title, 'matrix_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
                 except:
                     pass
-
-# #############################
-# # REGRESSION ################
-
-# import statsmodels.api as sm
-# X = df_meta.loc[ind_u&ind_clean, ['train_amp']]
-# # X = df_meta.loc[ind_u&ind_clean, ['train_amp', 'train_width', 'train_rate']]
-# X = sm.add_constant(X)
-# Y = df_meta.loc[ind_u&ind_clean, 'pupil_resp_0_all']
-
-# Ymin = Y.min()
-# Ymax = Y.max()
-# Y = (Y - Ymin) / (Ymax-Ymin)
-
-# # GLM:
-# model = sm.GLM(Y, X, family=sm.families.Binomial(link=sm.genmod.families.links.cauchy()),)
-# res = model.fit()
-# print(res.summary())
-
-# # model = sm.Logit(Y, X)
-# # res = model.fit()
-# # print(res.summary())
-
-# Y_test = df_meta.loc[ind_u&ind_clean,:].groupby('train_amp_bin').mean()['pupil_resp_0_all']
-# Y_test = (Y_test - Ymin) / (Ymax-Ymin)
-# X_test = df_meta.loc[ind_u&ind_clean,:].groupby('train_amp_bin').mean()['train_amp']
-# X_test = sm.add_constant(X_test)
-
-# plt.plot(X_test['train_amp'], Y_test, 'o')
-# plt.plot(X_test['train_amp'], res.predict(X_test))
-# # plt.xscale('log')
-# # plt.yscale('log')
-# plt.show()
-
-
-
-
-
-
-
-# # plot scalars:
-# # -------------
-
-# for key in timewindows.keys():
-#     for ind, title in zip([ind_u, ind_g, ind_u&ind_s, ind_u&ind_w], ['u', 'g', 'us', 'uw']):
-#         if not (measure == 'velocity') | (measure == 'blink'):
-#             ind = ind & ind_clean
-#         for i, window in enumerate(timewindows[key]):
-#             measure = '{}_resp_{}'.format(key, i)
-#             fig = vns_analyses.catplot_scalars(df_meta.loc[ind,:], measure=measure, ylim=ylims[key], )
-#             fig.savefig(os.path.join(fig_dir, 'responses_{}_{}_{}_catplot.pdf'.format(title, key, i)))
-
-# for ind, title in zip([ind_u, ind_g,], ['u', 'g']):
-#     fig = vns_analyses.catplot_nr_trials(df_meta, ind1=ind, ind2=ind&ind_s, )
-#     fig.savefig(os.path.join(fig_dir, 'trials_still_{}_catplot.pdf'.format(title)))
-#     fig = vns_analyses.catplot_nr_trials(df_meta, ind1=ind, ind2=ind&ind_clean, )
-#     fig.savefig(os.path.join(fig_dir, 'trials_clean_{}_catplot.pdf'.format(title)))
-#     fig = vns_analyses.catplot_nr_trials(df_meta, ind1=ind, ind2=ind&ind_s&ind_clean,)
-#     fig.savefig(os.path.join(fig_dir, 'trials_still_clean_{}_catplot.pdf'.format(title)))
-
-# df = df_meta.loc[
-#             # (df_meta['train_amp_bin'] == 4)&
-#             # (df_meta['train_width_bin'] == 3)&
-#             (df_meta['train_amp_corr'] > 0.4)&(df_meta['train_amp_corr'] < 0.7)&
-#             (df_meta['train_width'] == 0.2)|(df_meta['train_width'] == 0.4)&
-#             (df_meta['train_rate'] == 20),:]
-# df = df.groupby(['subj_idx', 'session', 'cuff_type']).mean().reset_index()
-# df = df.loc[df['session_amp_leak']>0,:]
-
-# df.loc[df.session_amp_leak<0.25,'pupil_resp_2'].mean()
-
-# for measure in ['pupil_resp_1', 'blink_resp_1', 'eye_resp_1', 'pupil_resp_2', 'blink_resp_2', 'eye_resp_2']:
-#     fig = plt.figure(figsize=(3,3))
-#     plt.plot(df.loc[df['cuff_type']=='double', 'session_amp_leak'], df.loc[df['cuff_type']=='double', measure], 'o', markeredgewidth=0.5, markeredgecolor='w', color='red')
-#     plt.plot(df.loc[df['cuff_type']=='single', 'session_amp_leak'], df.loc[df['cuff_type']=='single', measure], 'o', markeredgewidth=0.5, markeredgecolor='w', color='orange')
-#     plt.plot(df.loc[df['cuff_type']=='intact', 'session_amp_leak'], df.loc[df['cuff_type']=='intact', measure], 'o', markeredgewidth=0.5, markeredgecolor='w', color='g')
-#     plt.xlim(0,1)
-#     plt.xlabel('Leak fraction')
-#     plt.ylabel(measure)
-#     plt.axvline(cut_off, ls='--', color='r')
-#     sns.despine(trim=False, offset=3)
-#     plt.tight_layout()
-#     fig.savefig(os.path.join(fig_dir, 'scatter_{}.pdf'.format(measure)))
-
-
-# # matrices:
-# # ---------
-# fig = vns_analyses.plot_pupil_responses_matrix(df_meta.loc[ind_u, :], vmin=-0.2, vmax=0.2)
-# fig.savefig(os.path.join(fig_dir, 'pupil_responses_matrix_u.pdf'))
-# fig = vns_analyses.plot_pupil_responses_matrix(df_meta.loc[ind_g, :], vmin=-0.2, vmax=0.2)
-# fig.savefig(os.path.join(fig_dir, 'pupil_responses_matrix_g.pdf'))
-
-# import ternary
-# scale = 60
-
-# figure, tax = ternary.figure(scale=scale)
-# tax.heatmap(shannon_entropy, boundary=True, style="triangular")
-# tax.boundary(linewidth=2.0)
-# tax.set_title("Shannon Entropy Heatmap")
-
-# tax.show()
-
-
-# def generate_random_heatmap_data(scale=5):
-#     from ternary.helpers import simplex_iterator
-#     import random
-#     d = dict()
-#     for (i,j,k) in simplex_iterator(scale):
-#         d[(i,j)] = random.random()
-#     return d
-
-
-
-# d = {
-#     (0, 0): 0.5671351527830725,
-#     (0, 1): 0.6215131076044016,
-#     (0, 2): 0.012781753598793633,
-#     (0, 3): 0.707684078957192,
-#     (0, 4): 0.9650973183040746,
-#     (1, 0): 0.3969760579643895,
-#     (1, 1): 0.3097635940052216,
-#     (1, 2): 0.9531730871255774,
-#     (1, 3): 0.9364529229723594,
-#     (2, 0): 0.20446303966933876,
-#     (2, 1): 0.14090809049974928,
-#     (2, 2): 0.47887819021958244,
-#     (3, 0): 0.0018001448519757712,
-#     (3, 1): 0.8081398969569612,
-#     (4, 0): 0.7275761581090349
-#     }
-
-
-
-# scale = 4
-# d = generate_random_heatmap_data(scale)
-# figure, tax = ternary.figure(scale=scale)
-# tax.heatmap(d)
-# tax.boundary()
-# tax.set_title("Heatmap Test: Hexagonal")
-
-
-
-
-# ################################################################################################################################################################################################################
-
-# # session-wise walking probabilites:
-# averages = df.groupby(['subj_idx', 'session']).mean().reset_index()
-# averages2 = df.groupby(['subj_idx', 'session', 'walk_b']).mean().reset_index()
-# probs = (df.groupby(['subj_idx', 'session', 'walk_b']).sum()['walk'] / df.groupby(['subj_idx', 'session'])['ones'].sum()).reset_index()
-# probs.columns = ['subj_idx', 'session', 'walk_b', 'p_walk']
-
-# # plot reversion to mean:
-# fig = vns_analyses.plot_reversion_to_mean_correction(df.loc[df['walk_transition']==3,:], measure='velocity', func=vns_analyses.quadratic)
-# fig.savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean.pdf'))
-
-# # plot across sessions:
-# titles = ['still', 'walk']
-# fig = plt.figure(figsize=(8,2))
-# plt_nr = 1
-# for i in range(2):
-#     ax = fig.add_subplot(1,4,plt_nr)
-#     x = np.array(averages['velocity'])
-#     y = np.array(probs.loc[probs['walk_b']==i, 'p_walk'])
-#     x = np.log10(x)
-#     # y = np.log10(y)
-#     y = sp.special.logit(y)
-#     ax.scatter(x,y)
-#     func = vns_analyses.linear
-#     popt, pcov = curve_fit(func, x, y,)
-#     ax.plot(np.linspace(min(x), max(x), 100), func(np.linspace(min(x), max(x), 100), *popt), color='k', ls='-', zorder=10)
-#     ax.set_xlabel('Velocity (dm / s)')
-#     ax.set_ylabel('P(walk)')
-#     ax.set_title(titles[i])
-#     plt_nr += 1
-# for i in range(2):
-#     ax = fig.add_subplot(1,4,plt_nr)
-#     x = np.array(averages['velocity'])
-#     y = np.array(averages2.loc[averages2['walk_b']==i, 'velocity'])
-#     x = np.log10(x)
-#     y = np.log10(y)
-#     ax.scatter(x,y)
-#     try:
-#         func = vns_analyses.linear
-#         popt, pcov = curve_fit(func, x, y,)
-#         ax.plot(np.linspace(min(x), max(x), 100), func(np.linspace(min(x), max(x), 100), *popt), color='k', ls='-', zorder=10)
-#     except:
-#         pass
-#     ax.set_xlabel('Velocity (dm / s)')
-#     ax.set_ylabel('Velocity change')
-#     ax.set_title(titles[i])
-#     # plt.xscale('log')
-#     # plt.yscale('log')
-#     plt_nr += 1
-# sns.despine(trim=False, offset=3)
-# plt.tight_layout()
-# fig.savefig(os.path.join(fig_dir, 'velocity_session_wise.pdf'))
-
-
-
-
-
-# for walk_b in [1]:
-    
-#     # session-wise walking probabilites:
-#     averages = df.loc[df['walk_b']==walk_b,:].groupby(['subj_idx', 'bins_velocity']).mean().reset_index()
-#     averages2 = df.loc[df['walk_b']==walk_b,:].groupby(['subj_idx', 'bins_velocity', 'walk_b']).mean().reset_index()
-#     probs = (df.loc[df['walk_b']==walk_b,:].groupby(['subj_idx', 'bins_velocity', 'walk_b']).sum()['walk'] / df.loc[df['walk_b']==walk_b,:].groupby(['subj_idx', 'bins_velocity'])['ones'].sum()).reset_index()
-#     probs.columns = ['subj_idx', 'bins_velocity', 'walk_b', 'p_walk']
-
-
-#     fig = plt.figure(figsize=(8,10))
-#     for i, s in enumerate(df['subj_idx'].unique()):
-#         ax = fig.add_subplot(5,4,i+1)
-#         x = np.array(averages.loc[averages['subj_idx']==s,:].groupby('bins_velocity').mean()['velocity'])
-#         y = np.array(probs.loc[probs['subj_idx']==s,:].groupby('bins_velocity').mean()['p_walk'])
-#         # y = sp.special.logit(y)
-#         ax.scatter(x,y)
-#         try:
-#             func = vns_analyses.linear
-#             popt, pcov = curve_fit(func, x, y,)
-#             ax.plot(np.linspace(min(x), max(x), 100), func(np.linspace(min(x), max(x), 100), *popt), color='k', ls='-', zorder=10)
-#         except:
-#             pass   
-#         plt.ylim(-0.1,1.1)
-#         plt.title('{} - p(walk)={}%'.format(s, int(100*df.loc[(df['subj_idx']==s)&(df['walk_b']==walk_b),'walk'].mean())))
-#     sns.despine(trim=False, offset=3)
-#     plt.tight_layout()
-#     plt.show()
-
-
-
-# ################################################################################################################################################################################################################
-
-# # session-wise walking probabilites:
-# averages = df.groupby(['subj_idx', 'session']).mean().reset_index()
-# averages2 = df.groupby(['subj_idx', 'session', 'walk_transition']).mean().reset_index()
-# probs_s = (df.loc[(df['walk_b']==0),:].groupby(['subj_idx', 'session', 'walk_transition']).count()['ones'] / df.loc[(df['walk_b']==0),:].groupby(['subj_idx', 'session'])['ones'].sum()).reset_index()
-# probs_w = (df.loc[(df['walk_b']==1),:].groupby(['subj_idx', 'session', 'walk_transition']).count()['ones'] / df.loc[(df['walk_b']==1),:].groupby(['subj_idx', 'session'])['ones'].sum()).reset_index()
-
-# # plot reversion to mean:
-# fig = vns_analyses.plot_reversion_to_mean_correction(df.loc[df['walk_transition']==3,:], measure='velocity', func=vns_analyses.quadratic)
-# fig.savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean.pdf'))
-
-# # plot across sessions:
-
-# ylabels = ['(still -> still)', '(still -> walk)', '(walk -> still)', '(walk -> walk)']
-# fig = plt.figure(figsize=(6,4))
-# plt_nr = 1
-# for i in range(4):
-#     ax = fig.add_subplot(2,4,plt_nr)
-#     x = np.array(averages['velocity'])
-#     if i < 2:
-#         y = np.array(probs_s.loc[probs_s['walk_transition']==i, 'ones'])
-#     else:
-#         y = np.array(probs_w.loc[probs_w['walk_transition']==i, 'ones'])
-#     x = np.log10(x)
-#     # y = np.log10(y)
-#     y = sp.special.logit(y)
-#     ax.scatter(x,y)
-#     func = vns_analyses.linear
-#     popt, pcov = curve_fit(func, x, y,)
-#     ax.plot(np.linspace(min(x), max(x), 100), func(np.linspace(min(x), max(x), 100), *popt), color='k', ls='-', zorder=10)
-#     ax.set_xlabel('Velocity (dm / s)')
-#     ax.set_ylabel('P'+ylabels[i])
-#     # plt.xscale('log')
-#     # plt.yscale('log')
-#     plt_nr += 1
-# for i in range(4):
-#     ax = fig.add_subplot(2,4,plt_nr)
-#     x = np.array(averages['velocity'])
-#     y = np.array(averages2.loc[averages2['walk_transition']==i, 'velocity'])
-#     x = np.log10(x)
-#     # y = np.log10(y)
-#     ax.scatter(x,y)
-#     func = vns_analyses.linear
-#     try:
-#         popt, pcov = curve_fit(func, x, y,)
-#         ax.plot(np.linspace(min(x), max(x), 100), func(np.linspace(min(x), max(x), 100), *popt), color='k', ls='-', zorder=10)
-#     except:
-#         pass
-#     ax.set_xlabel('Velocity (dm / s)')
-#     ax.set_ylabel('Velocity change '+ylabels[i])
-#     # plt.xscale('log')
-#     # plt.yscale('log')
-#     plt_nr += 1
-# sns.despine(trim=False, offset=3)
-# plt.tight_layout()
-# fig.savefig(os.path.join(fig_dir, 'velocity_session_wise.pdf'))
-
-# ################################################################################################################################################################################################################
-
-
-
-
-
-
-# probs = df.groupby(['walk_transition']).count()['ones']
-# probs.iloc[0:2] = probs.iloc[0:2] / probs.iloc[0:2].sum()
-# probs.iloc[2:4] = probs.iloc[2:4] / probs.iloc[2:4].sum()
-
-
-
-
-# #  / df['ones'].sum())
-# df_meta.loc[df_meta['walk_transition']==0, 'walk_1'] = df_meta.loc[df_meta['walk_transition']==1, 'walk_1'] - probs.iloc[0] 
-# df_meta.loc[df_meta['walk_transition']==1, 'walk_1'] = df_meta.loc[df_meta['walk_transition']==1, 'walk_1'] - probs.iloc[1] 
-# df_meta.loc[df_meta['walk_transition']==2, 'walk_1'] = df_meta.loc[df_meta['walk_transition']==1, 'walk_1'] - probs.iloc[2] 
-# df_meta.loc[df_meta['walk_transition']==3, 'walk_1'] = df_meta.loc[df_meta['walk_transition']==3, 'walk_1'] - probs.iloc[3] 
-
-
-# # # plot #FIXME:
-# # d = (df_meta.loc[ind_clean_w,:].groupby(['subj_idx', 'session', 'walk_transition']).count()['ones'] / df_meta.loc[ind_clean_w,:].groupby(['subj_idx', 'session'])['ones'].sum())
-# # probabilities = d.groupby('walk_transition').mean()
-# # sems = d.groupby('walk_transition').sem()
-# # plt.figure()
-# # plt.bar([0,1,2,3],probabilities, yerr=sems)
-# # plt.ylim(0,1)
-
-# for subj, df in df_meta.loc[ind_clean_w&ind_u,:].groupby(['subj_idx',]):
-#     probabilities = df.groupby('walk_transition').count()['ones'] / df.groupby('walk_transition').count()['ones'].sum()
-#     plt.figure()
-#     plt.bar(probabilities.index, probabilities)
-#     plt.xlim(0,4)
-#     plt.ylim(0,1)
-
-# # correct 
-
-
-
-
-
-
-# b = df.groupby(['walk_transition']).mean()['velocity']
-
-
-
-
-
-
-# d = (df.groupby(['subj_idx', 'session', 'walk_transition']).count()['ones'] / df.groupby(['subj_idx', 'session'])['ones'].sum())
-# probabilities = d.groupby('walk_transition').mean()
-# sems = d.groupby('walk_transition').sem()
-# plt.figure()
-# plt.bar([0,1,2,3],probabilities, yerr=sems)
-# plt.ylim(0,1)
-
-
-
-
-
-# df = df.loc[df['walk_transition']==3,:]
-
-# #FIXME: 
-# # walking-walking --> model
-# # still-walking --> average
-# # walking-still --> average
-# # still-still --> average
-
-# # bins:
-# bins = np.array([-10,-0.005,0.005,0.25,0.5,0.75,1,1.25,10])
-# df_meta['bins_velocity'] = pd.cut(df_meta['velocity_0'], bins=bins, labels=False)
-# df['bins_velocity'] = pd.cut(df['velocity_b'], bins=bins, labels=False)
-
-# # bin count:
-# velocity_counts = df.groupby(['bins_velocity']).count().reset_index()
-# df['bins_velocity_count'] = 0
-# for b in df['bins_velocity'].unique():
-#     df.loc[df['bins_velocity']==b, 'bins_velocity_count'] = int(velocity_counts.loc[velocity_counts['bins_velocity']==b, 'velocity'])
-
-# # correct:
-# popt, pcov = curve_fit(vns_analyses.qubic, df['velocity_b'], df['velocity'])
-# df_meta['velocity'] = df_meta['velocity_1']
-# df_meta['velocity_c'] = df_meta['velocity'] - vns_analyses.qubic(df_meta['velocity_0'], *popt)
-
-
-
-# # plots:
-# # ------
-# imp.reload(vns_analyses)
-# # # plot 1 -- time courses:
-# # fig = vns_analyses.plot_pupil_responses(df_meta, epochs_p.loc[:, ::50], bins=bins, ylabel='Pupil response\n(% max)', ylim=(0, 1.2))
-# # fig.savefig(os.path.join(fig_dir, 'pupil_responses_u_b.pdf'))
 

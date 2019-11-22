@@ -35,6 +35,34 @@ sns.set(style='ticks', font='Arial', font_scale=1, rc={
     'ytick.color':'Black',} )
 sns.plotting_context()
 
+def mediation_analysis(df, X, pupil_measure, calcium_measure):
+    
+    from rpy2.robjects import pandas2ri
+
+    res = lavaan(df=df.loc[~np.isnan(df[pupil_measure]),:], X=X, Y=pupil_measure, M=calcium_measure, C=False, zscore=True,)
+    res = pandas2ri.ri2py(res)
+    print(res)
+
+    y = np.array([float(res.loc[res['label']=='total','est']), float(res.loc[res['label']=='ab','est']), float(res.loc[res['label']=='c','est'])])
+    y1 = np.array([float(res.loc[res['label']=='total','ci.lower']), float(res.loc[res['label']=='ab','ci.lower']), float(res.loc[res['label']=='c','ci.lower'])])
+    y2 = np.array([float(res.loc[res['label']=='total','ci.upper']), float(res.loc[res['label']=='ab','ci.upper']), float(res.loc[res['label']=='c','ci.upper'])])
+    ci = y2-y1
+
+    fig = plt.figure(figsize=(8,2))
+    ax = fig.add_subplot(141)
+    plt.bar([0,1,2], y, yerr=ci)
+    plt.xticks([0,1,2], ['c','a*b',"c'"])
+    ax = fig.add_subplot(142)
+    sns.regplot(df[X], df[pupil_measure], line_kws={'color': 'red'})
+    ax = fig.add_subplot(143)
+    sns.regplot(df[X], df[calcium_measure], line_kws={'color': 'red'})
+    ax = fig.add_subplot(144)
+    sns.regplot(df[pupil_measure], df[calcium_measure], line_kws={'color': 'red'})
+    sns.despine(trim=False, offset=3)
+    plt.tight_layout()
+    
+    return fig
+
 
 def lavaan(df, X, Y, M, C=False, zscore=True,):
     
@@ -329,6 +357,7 @@ subjects = {
     'C7A6': ['1', '7', '8',],  
     'C1772': ['6', '7', '8',],
     'C1773': ['5', '6', '7', '8', '10'],
+    # 'C1773': ['10'],
 }
 
 if preprocess:
@@ -344,13 +373,15 @@ if preprocess:
     epochs_c = pd.concat([res[i][0] for i in range(len(res))], axis=0)
     epochs_x = pd.concat([res[i][1] for i in range(len(res))], axis=0).reset_index(drop=True)
     epochs_y = pd.concat([res[i][2] for i in range(len(res))], axis=0).reset_index(drop=True)
-    epochs_v = pd.concat([res[i][3] for i in range(len(res))], axis=0).reset_index(drop=True)
-    epochs_p = pd.concat([res[i][4] for i in range(len(res))], axis=0).reset_index(drop=True)
-    epochs_l = pd.concat([res[i][5] for i in range(len(res))], axis=0).reset_index(drop=True)
-    epochs_b = pd.concat([res[i][6] for i in range(len(res))], axis=0).reset_index(drop=True)
+    epochs_corrXY = pd.concat([res[i][3] for i in range(len(res))], axis=0).reset_index(drop=True)
+    epochs_v = pd.concat([res[i][4] for i in range(len(res))], axis=0).reset_index(drop=True)
+    epochs_p = pd.concat([res[i][5] for i in range(len(res))], axis=0).reset_index(drop=True)
+    epochs_l = pd.concat([res[i][6] for i in range(len(res))], axis=0).reset_index(drop=True)
+    epochs_b = pd.concat([res[i][7] for i in range(len(res))], axis=0).reset_index(drop=True)
     epochs_c.to_hdf(os.path.join(data_dir, 'epochs_c.hdf'), key='calcium')
     epochs_x.to_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='x_motion')
     epochs_y.to_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='y_motion')
+    epochs_corrXY.to_hdf(os.path.join(data_dir, 'epochs_corrXY.hdf'), key='corrXY')
     epochs_v.to_hdf(os.path.join(data_dir, 'epochs_v.hdf'), key='velocity')
     epochs_p.to_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil')
     epochs_l.to_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid')
@@ -359,11 +390,11 @@ if preprocess:
 epochs_c = pd.read_hdf(os.path.join(data_dir, 'epochs_c.hdf'), key='calcium')
 epochs_x = pd.read_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='x_motion')
 epochs_y = pd.read_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='y_motion')
+epochs_corrXY = pd.read_hdf(os.path.join(data_dir, 'epochs_corrXY.hdf'), key='corrXY')
 epochs_v = pd.read_hdf(os.path.join(data_dir, 'epochs_v.hdf'), key='velocity')
 epochs_p = pd.read_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil')
 epochs_l = pd.read_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid')
 epochs_b = pd.read_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
-
 
 # settings
 motion_cutoff = 2
@@ -389,29 +420,36 @@ timewindows = {
             'velocity_0' : [(-0.1,0), (-10.1,-10)],
             'velocity_1' : [(9.9,10), (-0.1,0)],
 
-            'pupil_-3' : [(-27.5, -22.5), (None, None)],  #
-            'pupil_-2' : [(-20, -15), (None, None)],      #
-            'pupil_-1' : [(-12.5, -7.5), (None, None)],   #
-            'pupil_0' : [(-5, 0), (None, None)],          #
-            'pupil_1' : [(0, 50), (None, None)],
+            'pupil_-1' : [(-60, -30), (None, None)],
+            'pupil_0' : [(-30, 0), (None, None)],
+            'pupil_1' : [(10, 40), (None, None)],
 
-            'blink_-3' : [(-27.5, -22.5), (None, None)],  #
-            'blink_-2' : [(-20, -15), (None, None)],      #
-            'blink_-1' : [(-12.5, -7.5), (None, None)],   #
-            'blink_0' : [(-5, 0), (None, None)],          #
+            'blink_-3' : [(-27.5, -22.5), (None, None)],
+            'blink_-2' : [(-20, -15), (None, None)],
+            'blink_-1' : [(-12.5, -7.5), (None, None)],
+            'blink_0' : [(-5, 0), (None, None)],
             'blink_1' : [(2.5, 7.5), (None, None)],
 
-            'eyelid_-3' : [(-27.5, -22.5), (None, None)],  #
-            'eyelid_-2' : [(-20, -15), (None, None)],      #
-            'eyelid_-1' : [(-12.5, -7.5), (None, None)],   #
-            'eyelid_0' : [(-5, 0), (None, None)],          #
+            'eyelid_-3' : [(-27.5, -22.5), (None, None)],
+            'eyelid_-2' : [(-20, -15), (None, None)],
+            'eyelid_-1' : [(-12.5, -7.5), (None, None)],
+            'eyelid_0' : [(-5, 0), (None, None)],
             'eyelid_1' : [(0, 25), (None, None)],
             
-            'calcium_-3' : [(-27.5, -22.5), (None, None)],  #
-            'calcium_-2' : [(-20, -15), (None, None)],      #
-            'calcium_-1' : [(-12.5, -7.5), (None, None)],   #
-            'calcium_0' : [(-5, 0), (None, None)],          #
+            'calcium_-3' : [(-27.5, -22.5), (None, None)],
+            'calcium_-2' : [(-20, -15), (None, None)],
+            'calcium_-1' : [(-12.5, -7.5), (None, None)],
+            'calcium_0' : [(-5, 0), (None, None)],
             'calcium_1' : [(2.5, 7.5), (None, None)],
+
+            'imagex_0' : [(-5, 0), (None, None)],
+            'imagex_1' : [(2.5, 7.5), (None, None)],
+
+            'imagey_0' : [(-5, 0), (None, None)],
+            'imagey_1' : [(2.5, 7.5), (None, None)],
+
+            'corrXY_0' : [(-5, 0), (None, None)],
+            'corrXY_1' : [(0, 5), (None, None)],
 
             }
 
@@ -422,6 +460,9 @@ epochs = {
             'blink' : epochs_b,
             # 'eyemovement' : epochs_xy,
             'calcium' : epochs_c,
+            'imagex' : epochs_x,
+            'imagey' : epochs_y,
+            'corrXY' : epochs_corrXY,
             }
 
 ylims = {
@@ -431,7 +472,10 @@ ylims = {
             'eyelid' : (-0.01, 0.1),
             'blink' : (0, 0.3),
             # 'eyemovement' : (0, 0.2),
-            'calcium' : (0, 0.8),
+            'calcium' : (-0.1, 0.6),
+            'imagex' : (0, 5),
+            'imagey' : (0, 5),
+            'corrXY' : (-0.01, 0.04),
             }
 
 for key in timewindows.keys():
@@ -446,22 +490,32 @@ for key in timewindows.keys():
     # if key == 'blink':
     #     df_meta['{}_resp_{}'.format(key, i)] = (epochs[key].loc[:,(x>=window[0])&(x<=window[1])].mean(axis=1) > 0).astype(int)
 
+# add walk probability scalars
 df_meta['walk_-3'] = ((df_meta['velocity_-3'] < velocity_cutoff[0])|(df_meta['velocity_-3'] > velocity_cutoff[1])).astype(int)
 df_meta['walk_-2'] = ((df_meta['velocity_-2'] < velocity_cutoff[0])|(df_meta['velocity_-2'] > velocity_cutoff[1])).astype(int)
 df_meta['walk_-1'] = ((df_meta['velocity_-1'] < velocity_cutoff[0])|(df_meta['velocity_-1'] > velocity_cutoff[1])).astype(int)
 df_meta['walk_0'] = ((df_meta['velocity_0'] < velocity_cutoff[0])|(df_meta['velocity_0'] > velocity_cutoff[1])).astype(int)
 df_meta['walk_1'] = ((df_meta['velocity_1'] < velocity_cutoff[0])|(df_meta['velocity_1'] > velocity_cutoff[1])).astype(int)
 
+# add image motion scalars:
+df_meta['imagex'] = abs(df_meta['imagex_1']-df_meta['imagex_0'])
+df_meta['imagey'] = abs(df_meta['imagey_1']-df_meta['imagey_0'])
+
+df_meta['corrXY'] = df_meta['corrXY_1']-df_meta['corrXY_0']
+
 # throw away weird trial:
 remove = np.array(
         (df_meta['subj_idx'] == 'C1773') & (df_meta['session']=='8') & (df_meta['trial']==17) | # weird trial with crazy spike
         (df_meta['width']==0.8) | # should not be...
         (np.isnan(np.array(epochs_c.loc[:,(epochs_c.columns>0)&(epochs_c.columns<1)].mean(axis=1)))) | # missing calcium data...
-        np.isnan(df_meta['pupil_1'])
+        np.isnan(df_meta['pupil_1']) | # missing pupil data...
+        (df_meta['imagex']>motion_cutoff) | 
+        (df_meta['imagey']>motion_cutoff)
         )
 df_meta = df_meta.loc[~remove,:].reset_index(drop=True)
 epochs_x = epochs_x.loc[~remove,:].reset_index(drop=True)
 epochs_y = epochs_y.loc[~remove,:].reset_index(drop=True)
+epochs_corrXY = epochs_corrXY.loc[~remove,:].reset_index(drop=True)
 epochs_v = epochs_v.loc[~remove,:].reset_index(drop=True)
 epochs_p = epochs_p.loc[~remove,:].reset_index(drop=True)
 epochs_l = epochs_l.loc[~remove,:].reset_index(drop=True)
@@ -502,20 +556,37 @@ epochs_c = epochs_c.set_index('group', append=True)
 
 # correct scalars:
 df_meta, figs = vns_analyses.correct_scalars(df_meta, group=np.ones(df_meta.shape[0], dtype=bool), velocity_cutoff=velocity_cutoff, ind_clean_w=ind_clean_w)
+
 figs[0].savefig(os.path.join(fig_dir, 'pupil_reversion_to_mean1.pdf'))
 figs[1].savefig(os.path.join(fig_dir, 'pupil_reversion_to_mean2.pdf'))
 figs[2].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean1.pdf'))
 figs[3].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean2.pdf'))
-figs[4].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean1.pdf'))
-figs[5].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean2.pdf'))
-figs[6].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean3.pdf'))
-figs[7].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean4.pdf'))
-figs[8].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean1.pdf'))
-figs[9].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean2.pdf'))
-figs[10].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean3.pdf'))
-figs[11].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean4.pdf'))
+figs[4].savefig(os.path.join(fig_dir, 'calcium_reversion_to_mean1.pdf'))
+figs[5].savefig(os.path.join(fig_dir, 'calcium_reversion_to_mean2.pdf'))
+figs[6].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean1.pdf'))
+figs[7].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean2.pdf'))
+figs[8].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean3.pdf'))
+figs[9].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean4.pdf'))
+figs[10].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean1.pdf'))
+figs[11].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean2.pdf'))
+figs[12].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean3.pdf'))
+figs[13].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean4.pdf'))
 
-
+# motion figure
+fig = plt.figure(figsize=(4,10))
+plt_nr = 1
+for X in ['imagex', 'imagey', 'corrXY_0', 'corrXY_1', 'corrXY']:
+    ax = fig.add_subplot(5,2,plt_nr)
+    plt.hist(df_meta[X], alpha=0.5, bins=12, histtype='stepfilled')
+    # plt.axvline(motion_cutoff, ls='--', color='r')
+    plt.axvline(df_meta[X].mean(), ls='-', color='k')
+    plt_nr += 1
+    ax = fig.add_subplot(5,2,plt_nr)
+    sns.regplot(df_meta[X], df_meta['calcium_c'], line_kws={'color': 'red'})
+    plt_nr += 1
+sns.despine(trim=False, offset=3)
+plt.tight_layout()
+fig.savefig(os.path.join(fig_dir, 'image_motion.pdf'))
 
 #####################################################################################################
 
@@ -542,25 +613,22 @@ figs[11].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean4.pdf'))
 
 ####################################################################################################
 
-# image position scalars:
-x = epochs_x.columns
-image_pos_x = epochs_x.loc[:,(x>=-5.5)&(x<=-0.5)].mean(axis=1)
-x = epochs_y.columns
-image_pos_y = epochs_y.loc[:,(x>=-5.5)&(x<=-0.5)].mean(axis=1)
-
 # subtract baselines:
 x = epochs_c.columns
 epochs_c = epochs_c - np.atleast_2d(epochs_c.loc[:,(x>=-5)&(x<=-0)].mean(axis=1)).T
-x = epochs_x.columns
-epochs_x = epochs_x - np.atleast_2d(epochs_x.loc[:,(x>=-5)&(x<=-0)].mean(axis=1)).T
-x = epochs_y.columns
-epochs_y = epochs_y - np.atleast_2d(epochs_y.loc[:,(x>=-5)&(x<=-0)].mean(axis=1)).T
 x = epochs_p.columns
 epochs_p = epochs_p - np.atleast_2d(epochs_p.loc[:,(x>=-5)&(x<=-0)].mean(axis=1)).T
 x = epochs_l.columns
 epochs_l = epochs_l - np.atleast_2d(epochs_l.loc[:,(x>=-5)&(x<=-0)].mean(axis=1)).T
 x = epochs_v.columns
 epochs_v = epochs_v - np.atleast_2d(epochs_v.loc[:,(x>=-0.1)&(x<=-0.0)].mean(axis=1)).T
+x = epochs_x.columns
+epochs_x = abs(epochs_x - np.atleast_2d(epochs_x.loc[:,(x>=-5)&(x<=-0)].mean(axis=1)).T)
+x = epochs_y.columns
+epochs_y = abs(epochs_y - np.atleast_2d(epochs_y.loc[:,(x>=-5)&(x<=-0)].mean(axis=1)).T)
+# x = epochs_corrXY.columns
+# epochs_corrXY = epochs_corrXY - np.atleast_2d(epochs_corrXY.loc[:,(x>=-5)&(x<=-0)].mean(axis=1)).T
+
 
 epochs = {
             'velocity' : epochs_v,
@@ -569,41 +637,43 @@ epochs = {
             'blink' : epochs_b,
             # 'eyemovement' : epochs_xy,
             'calcium' : epochs_c,
+            'imagex' : epochs_x,
+            'imagey' : epochs_y,
+            'corrXY' : epochs_corrXY,
             }
 
-# x = epochs_v.columns
-# epochs_v = epochs_v - np.atleast_2d(epochs_v.loc[:,(x>=-5)&(x<=-0)].mean(axis=1)).T
 
-# image motion scalars:
-image_motion_x = epochs_x.quantile(0.95, axis=1)
-image_motion_y = epochs_y.quantile(0.95, axis=1)
-
-df_meta['calcium'] = df_meta['calcium_1']-df_meta['calcium_0']
-df_meta['motion_x'] = np.array(image_motion_x)
-df_meta['motion_y'] = np.array(image_motion_y)
+# df_meta['calcium'] = df_meta['calcium_1']-df_meta['calcium_0']
 df_meta['amplitude_bin'] = df_meta['amplitude'].copy()
 df_meta['width_bin'] = df_meta['width'].copy()
 df_meta['rate_bin'] = df_meta['rate'].copy()
 df_meta['charge_bin'] = pd.cut(df_meta['charge'], [0,0.035,0.065,0.105,0.19,1], labels=False)
 df_meta['charge_ps_bin'] = df_meta['charge_ps'].copy()
 
-shell()
+# # regress out image motion from calcium traces:
+# import statsmodels.api as sm
+# X = df_meta[["imagex", "imagey"]]
+# for y_measure in ["calcium", "calcium_c", "calcium_c2"]:
+#     y = df_meta[y_measure]
+#     model = sm.OLS(y, X).fit()
+#     df_meta[y_measure] = model.resid + df_meta[y_measure].mean()
 
 imp.reload(vns_analyses)
-# for measure in ['pupil', 'velocity', 'walk', 'eyelid', 'calcium']:
-for measure in ['pupil', 'calcium']:
+for measure in ['pupil', 'velocity', 'walk', 'eyelid', 'calcium', 'corrXY']:
+# for measure in ['pupil', 'calcium', 'imagex', 'imagey']:
+# for measure in ['pupil']:
 
     if not os.path.exists(os.path.join(fig_dir, measure)):
         os.makedirs(os.path.join(fig_dir, measure))
 
-    for walk in [0,1,2]:
+    for walk in [2,1,0]:
         if walk == 0:
-            ind = np.array((abs(df_meta['motion_x'])<motion_cutoff) & (abs(df_meta['motion_y'])<motion_cutoff) & (abs(df_meta['velocity'])<velocity_cutoff[1]))
+            ind = np.array(abs(df_meta['velocity'])<velocity_cutoff[1])
         elif walk == 1:
-            ind = np.array((abs(df_meta['motion_x'])<motion_cutoff) & (abs(df_meta['motion_y'])<motion_cutoff) & (abs(df_meta['velocity'])>velocity_cutoff[1]))
+            ind = np.array(abs(df_meta['velocity'])>velocity_cutoff[1])
         elif walk == 2:
-            ind = np.array((abs(df_meta['motion_x'])<motion_cutoff) & (abs(df_meta['motion_y'])<motion_cutoff))
-        
+            ind = np.ones(df_meta.shape[0], dtype=bool)
+
         if ('velocity' in measure) or ('walk' in measure):
             ind = ind & ind_clean_w
 
@@ -617,34 +687,30 @@ for measure in ['pupil', 'calcium']:
             else:
                 fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[ind, ::10], timewindows=timewindows, ylabel=measure+'_1', ylim=ylim)
             fig.savefig(os.path.join(fig_dir, measure, 'timecourses_{}_{}.pdf'.format(measure, walk)))
+        
+        if measure == 'corrXY':
+            measure_exts = ['', '_0', '_1']
+        else:
+            measure_exts = ['', '_c', '_c2']
 
-        for measure_ext in ['', '_c', '_c2']:
+        for measure_ext in measure_exts:
             
-            if measure == 'calcium':
+            if (measure == 'calcium') or (measure == 'corrXY'):
                 p0 = True
             else:
                 p0 = False
 
-            try:
-                fig = vns_analyses.plot_scalars(df_meta.loc[ind, :], measure=measure+measure_ext, ylabel=measure, ylim=ylim, p0=p0)
-                fig.savefig(os.path.join(fig_dir, measure, 'scalars_{}_{}.pdf'.format(measure+measure_ext, walk)))
-            except:
-                pass
+            fig = vns_analyses.plot_scalars(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim, p0=p0)
+            fig.savefig(os.path.join(fig_dir, measure, 'scalars_{}_{}.pdf'.format(measure+measure_ext, walk)))
 
-            try:            
-                fig = vns_analyses.plot_scalars2(df_meta.loc[ind, :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
-                fig.savefig(os.path.join(fig_dir, measure, 'scalars2_{}_{}.pdf'.format(measure+measure_ext, walk)))
-            except:
-                pass
-            
-            try:
-                fig = vns_analyses.plot_scalars3(df_meta.loc[ind, :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
-                fig.savefig(os.path.join(fig_dir, measure, 'scalars3_{}_{}.pdf'.format(measure+measure_ext, walk)))
-            except:
-                pass
+            fig = vns_analyses.plot_scalars2(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
+            fig.savefig(os.path.join(fig_dir, measure, 'scalars2_{}_{}.pdf'.format(measure+measure_ext, walk)))
+
+            fig = vns_analyses.plot_scalars3(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
+            fig.savefig(os.path.join(fig_dir, measure, 'scalars3_{}_{}.pdf'.format(measure+measure_ext, walk)))
 
             try:
-                fig = vns_analyses.plot_pupil_responses_matrix(df_meta.loc[ind, :], measure=measure+measure_ext, vmin=-ylim[1], vmax=ylim[1])
+                fig = vns_analyses.plot_pupil_responses_matrix(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, vmin=-ylim[1], vmax=ylim[1])
                 fig.savefig(os.path.join(fig_dir, measure, 'matrix_{}_{}.pdf'.format(measure+measure_ext, walk)))
             except:
                 pass
@@ -653,7 +719,7 @@ for measure in ['pupil', 'calcium']:
 
             # across good stims:
             x = np.array(epochs_c.columns, dtype=float)
-            fig = plt.figure(figsize=(3,2))
+            fig = plt.figure(figsize=(2,2))
             ax = fig.add_subplot(1,1,1)
             m = np.array(epochs_c.loc[ind,:].groupby('group').mean())
             s = np.array(epochs_c.loc[ind,:].groupby('group').sem())
@@ -670,16 +736,17 @@ for measure in ['pupil', 'calcium']:
             s_bar = zip(np.where(np.diff(sig_indices)==1)[0]+1, np.where(np.diff(sig_indices)==-1)[0])
             for sig in s_bar:
                 ax.hlines(-0.1, x[int(sig[0])]-(np.diff(x)[0] / 2.0), x[int(sig[1])]+(np.diff(x)[0] / 2.0), color='green', alpha=1, linewidth=2.5)
-            
-            
             plt.axvline(0, lw=0.5, color='k')
             plt.axhline(0, lw=0.5, color='k')
+            plt.ylim(-0.1, 0.6)
+
             plt.xlabel('Time from pulse (s)')
             sns.despine(trim=False, offset=3)
             plt.tight_layout()
             fig.savefig(os.path.join(fig_dir, measure, 'vns_pulse_{}.pdf'.format(walk)))
 
-            fig = plt.figure(figsize=(3,2))
+
+            fig = plt.figure(figsize=(2,2))
             ax = fig.add_subplot(1,1,1)
             m = np.array(epochs_x.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).mean())
             s = np.array(epochs_x.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).sem())
@@ -694,7 +761,7 @@ for measure in ['pupil', 'calcium']:
             plt.tight_layout()
             fig.savefig(os.path.join(fig_dir, measure, 'vns_pulse_{}_x.pdf'.format(walk)))
 
-            fig = plt.figure(figsize=(3,2))
+            fig = plt.figure(figsize=(2,2))
             ax = fig.add_subplot(1,1,1)
             m = np.array(epochs_y.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).mean())
             s = np.array(epochs_y.loc[ind,:].groupby(epochs_c.loc[ind,:].index.get_level_values('group')).sem())
@@ -711,17 +778,17 @@ for measure in ['pupil', 'calcium']:
 
 
 # 3d plot:
-pupil_measure = 'pupil_c'
 
-fig = vns_analyses.hypersurface(df_meta, z_measure=pupil_measure)
+pupil_measure = 'pupil_c'
+calcium_measure = 'calcium_c'
+
+fig = vns_analyses.hypersurface(df_meta.loc[ind,:].reset_index(drop=True), z_measure=pupil_measure)
 fig.savefig(os.path.join(fig_dir, '3d_surface_pupil.pdf'))
 
 from sklearn.model_selection import KFold
 from scipy.optimize import curve_fit
-from rpy2.robjects import pandas2ri
 
 func = vns_analyses.log_logistic_3d
-# popt = np.load(os.path.join('/home/jwdegee/vns_exploration', 'params.npy'))
 
 df_meta['ne_p'] = np.NaN
 df_meta['ne_c'] = np.NaN
@@ -732,402 +799,18 @@ for train_index, test_index in kf.split(df_meta):
     # print("TRAIN:", train_index, "TEST:", test_index)
     popt, pcov = curve_fit(func, np.array(df_meta[['charge', 'rate']].iloc[train_index]), np.array(df_meta[pupil_measure].iloc[train_index]),)
     df_meta.loc[test_index, 'ne_p'] = func(np.array(df_meta.loc[test_index,['charge', 'rate']]) ,*popt)
-    popt, pcov = curve_fit(func, np.array(df_meta[['charge', 'rate']].iloc[train_index]), np.array(df_meta['calcium'].iloc[train_index]),)
+    popt, pcov = curve_fit(func, np.array(df_meta[['charge', 'rate']].iloc[train_index]), np.array(df_meta[calcium_measure].iloc[train_index]),)
     df_meta.loc[test_index, 'ne_c'] = func(np.array(df_meta.loc[test_index,['charge', 'rate']]) ,*popt)
     fold_nr+=1
 
-for X in ['ne_p', 'ne_c']:
-
-    res = lavaan(df=df_meta.loc[~np.isnan(df_meta[pupil_measure]),:], X=X, Y=pupil_measure, M='calcium', C=False, zscore=True,)
-    res = pandas2ri.ri2py(res)
-    print(res)
-
-    y = np.array([float(res.loc[res['label']=='total','est']), float(res.loc[res['label']=='ab','est']), float(res.loc[res['label']=='c','est'])])
-    y1 = np.array([float(res.loc[res['label']=='total','ci.lower']), float(res.loc[res['label']=='ab','ci.lower']), float(res.loc[res['label']=='c','ci.lower'])])
-    y2 = np.array([float(res.loc[res['label']=='total','ci.upper']), float(res.loc[res['label']=='ab','ci.upper']), float(res.loc[res['label']=='c','ci.upper'])])
-    ci = y2-y1
-
-    fig = plt.figure(figsize=(8,2))
-    ax = fig.add_subplot(141)
-    plt.bar([0,1,2], y, yerr=ci)
-    plt.xticks([0,1,2], ['c','a*b',"c'"])
-    ax = fig.add_subplot(142)
-    sns.regplot(df_meta[X], df_meta[pupil_measure], line_kws={'color': 'red'})
-    ax = fig.add_subplot(143)
-    sns.regplot(df_meta[X], df_meta['calcium'], line_kws={'color': 'red'})
-    ax = fig.add_subplot(144)
-    sns.regplot(df_meta[pupil_measure], df_meta['calcium'], line_kws={'color': 'red'})
-    sns.despine(trim=False, offset=3)
-    plt.tight_layout()
-    fig.savefig(os.path.join(fig_dir, 'mediation_{}.pdf'.format(X)))
-
-
-
-
-
-
-res = lavaan(df=df_meta.loc[~np.isnan(df_meta['pupil']),:], X='charge_ps', Y='calcium', M='pupil', C=False, zscore=True,)
-print(res)
-
-res = lavaan(df=df_meta, X='charge_ps', Y='eyelid', M='calcium', C=False, zscore=True,)
-print(res)
-
-import statsmodels.api as sm
-outcome_model = sm.OLS.from_formula("pupil ~ calcium + charge_ps", df_meta).fit()
-print(outcome_model.summary())
-
-import statsmodels.api as sm
-outcome_model = sm.OLS.from_formula("calcium ~ pupil + charge_ps", df_meta).fit()
-print(outcome_model.summary())
-
-
-import statsmodels.api as sm
-outcome_model = sm.OLS.from_formula("velocity ~ calcium + charge_ps", df_meta).fit()
-print(outcome_model.summary())
-
-import statsmodels.api as sm
-outcome_model = sm.OLS.from_formula("calcium ~ velocity + pupil + eyelid + charge_ps", df_meta).fit()
-print(outcome_model.summary())
-
-
-shell()
-
-
-
-
-
-
-
-# regress out walking, and image motion:
-
-
-import statsmodels.formula.api as sm
-# result = sm.ols(formula="calcium ~ velocity + motion_x + motion_y", data=df).fit()
-# df['calcium_c'] = np.array(result.resid) + df['calcium'].mean()
-# for (subj, ses), d in df.groupby(['subj_idx', 'session']):
-#     plot_motion(d)
-for (subj, ses), d in df.groupby(['subj_idx', 'session']):
-
-    ind = (df['subj_idx'] == subj) & (df['session'] == ses) 
-
-    result = sm.ols(formula="calcium ~ velocity + motion_x + motion_y", data=df.loc[ind,:]).fit()
-    df.loc[ind,'calcium_c'] = np.array(result.resid) + df.loc[ind,'calcium'].mean()
-
-shell()
-
-# parameter dependence:
-for walk in [0,1,2]:
+for walk in [2,1,0]:
     if walk == 0:
-        ind = np.array((abs(df['motion_x'])<motion_cutoff) & (abs(df['motion_y'])<motion_cutoff) & (abs(df['velocity'])<velocity_cutoff))
+        ind = np.array(abs(df_meta['velocity'])<velocity_cutoff[1])
     elif walk == 1:
-        ind = np.array((abs(df['motion_x'])<motion_cutoff) & (abs(df['motion_y'])<motion_cutoff) & (abs(df['velocity'])>velocity_cutoff))
+        ind = np.array(abs(df_meta['velocity'])>velocity_cutoff[1])
     elif walk == 2:
-        ind = np.array((abs(df['motion_x'])<motion_cutoff) & (abs(df['motion_y'])<motion_cutoff))
-    
+        ind = np.ones(df_meta.shape[0], dtype=bool)
 
-
-
-# ind = np.array((abs(image_pos_x)<10) & (abs(image_pos_y)<10) & (abs(image_motion_x)<motion_cutoff) & (abs(image_motion_y)<motion_cutoff) & (abs(distance)<velocity_cutoff))
-
-# epochs_xy = np.sqrt(((epochs_x**2)+(epochs_y**2)))
-
-# x = epochs_c.columns
-# calcium = utils._butter_lowpass_filter(np.array(epochs_c.loc[ind,(x>0)&(x<20)]).ravel(), highcut=1, fs=fs, order=3)
-# xx = utils._butter_lowpass_filter(np.array(epochs_x.loc[ind,(x>0)&(x<20)]).ravel(), highcut=1, fs=fs, order=3)
-# yy = utils._butter_lowpass_filter(np.array(epochs_y.loc[ind,(x>0)&(x<20)]).ravel(), highcut=1, fs=fs, order=3)
-# resid = lin_regress_resid(calcium, [xx,yy]) + calcium.mean()
-
-# epochs_c.loc[ind,(x>0)&(x<20)] = resid.reshape(epochs_c.loc[ind,(x>0)&(x<20)].shape)
-
-
-# fig = plt.figure(figsize=(5, 2*epochs_c.loc[ind,:].shape[0],))
-# for i in range(epochs_c.loc[ind,:].shape[0]):
-#     calcium = epochs_c.loc[ind,:].iloc[i]
-#     x = epochs_x.loc[ind,:].iloc[i]
-#     y = epochs_x.loc[ind,:].iloc[i]
-#     xy = np.sqrt((x**2)+(y**2))
-#     ax = fig.add_subplot(epochs_c.loc[ind,:].shape[0],1,i+1)
-#     ax.plot(calcium, alpha=1, color='r')
-#     ax.set_ylabel('Calcium response')
-#     ax = ax.twinx()
-#     ax.plot(xy, alpha=0.5, color='k', zorder=1)
-#     ax.set_ylabel('Image motion')
-#     plt.axvline(0, color='r', lw=0.5)
-# ax.set_xlabel('Time (s)')
-# plt.tight_layout()
-# fig.savefig(os.path.join(fig_dir, 'vns_single_pulses.pdf'))
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-# shell()
-
-# # powerspectrum
-# fs = 15
-# y = np.array(fluorescence.iloc[0])
-# plt.figure()
-# n = len(y) # length of the signal
-# k = np.arange(n)
-# T = n/fs
-# frq = k/T # two sides frequency range
-# frq = frq[range(int(n/2))] # one side frequency range
-# Y = sp.fft(y)/n # fft computing and normalization
-# Y = Y[range(int(n/2))]
-# plt.plot(frq,abs(Y),'r') # plotting the spectrum
-# plt.xlabel('Freq (Hz)')
-# plt.ylabel('|Y(freq)|')
-# plt.ylim(0,0.05)
-# # scipy Welch
-# f, Pxx_spec = sp.signal.welch(x, fs, 'flattop', 1024, scaling='spectrum')
-# plt.semilogy(f, np.sqrt(Pxx_spec))
-# # # numpy fft:
-# # ps = np.abs(np.fft.fft(x))**2
-# # freqs = np.fft.fftfreq(x.size, 1/fs)
-# # idx = np.argsort(freqs)
-# # plt.plot(freqs[idx], ps[idx])
-# plt.xlim(left=0)
-# plt.xlabel('frequency [Hz]')
-# plt.ylabel('Power')
-# plt.show()
-
-# # pulse locked figure:
-# means = epochs.groupby('cell').mean()
-# sems = epochs.groupby('cell').sem()
-# scalars = means.loc[:,(means.columns>1)&(means.columns<9)].mean(axis=1)
-# sorting = np.argsort(scalars)
-# means = means.iloc[sorting,:]
-# sems = sems.iloc[sorting,:]
-# x = np.array(means.columns, dtype=float)
-# offset = 0
-# fig = plt.figure(figsize=(12,3+(fluorescence.shape[0]/2)))
-# for i in range(fluorescence.shape[0]):
-#     plt.fill_between(x, means.iloc[i]+offset-sems.iloc[i], means.iloc[i]+offset+sems.iloc[i], alpha=0.2)
-#     plt.plot(x, means.iloc[i]+offset)
-#     plt.axhline(offset, lw=0.5, color='k', alpha=0.5)
-#     offset += np.percentile(scalars, 75)
-# plt.axvline(0, lw=0.5, color='r')
-# plt.ylabel('Fluorescence')
-# plt.xlabel('Time (s)')
-# sns.despine(trim=False, offset=3)
-# plt.tight_layout()
-# fig.savefig(os.path.join(fig_dir, 'vns_{}_{}_pulse.pdf'.format(subj, ses)))
-
-
-# # good trials:
-# motion_cutoff = 3
-# velocity_cutoff = 0.005
-# ind = (abs(image_pos_x)<10) & (abs(image_pos_y)<10) & (abs(image_motion_x)<motion_cutoff) & (abs(image_motion_y)<motion_cutoff) & (abs(distance)<velocity_cutoff)
-# good_trials = np.arange(image_pos_x.shape[0])[ind]
-
-# # figure:
-# epochs_m = epochs.loc[epochs.index.get_level_values('cell').isin(good_cells),:]
-# fig = plt.figure(figsize=(6,3))
-
-# ax = fig.add_subplot(231)
-# means = epochs_m.groupby(['cell']).mean()
-# for i in range(means.shape[0]):
-#     plt.plot(x, means.iloc[i], color='black')
-# plt.axhline(0, lw=0.5, color='k', alpha=0.5)
-# plt.axvline(0, lw=0.5, color='k', alpha=0.5)
-# plt.title('All trials\n(N={})'.format(image_pos_x.shape[0]))
-# plt.ylabel('Fluorescence')
-# plt.xlabel('Time (s)')
-
-# ax = fig.add_subplot(232)
-# ind = (abs(image_pos_x)<10) & (abs(image_pos_y)<10) & (abs(image_motion_x)<motion_cutoff) & (abs(image_motion_y)<motion_cutoff) & (abs(distance)>velocity_cutoff)
-# good_trials = np.arange(image_pos_x.shape[0])[ind]
-# means = epochs_m.loc[epochs_m.index.get_level_values('trial').isin(good_trials),:].groupby(['cell']).mean()
-# for i in range(means.shape[0]):
-#     plt.plot(x, means.iloc[i], color='black')
-# plt.axhline(0, lw=0.5, color='k', alpha=0.5)
-# plt.axvline(0, lw=0.5, color='k', alpha=0.5)
-# plt.title('Motion < {} μm\nWalk > {}mm\n(N={})'.format(motion_cutoff, velocity_cutoff, sum(ind)))
-# plt.ylabel('Fluorescence')
-# plt.xlabel('Time (s)')
-
-# ax = fig.add_subplot(233)
-# ind = (abs(image_pos_x)<10) & (abs(image_pos_y)<10) & (abs(image_motion_x)<motion_cutoff) & (abs(image_motion_y)<motion_cutoff) & (abs(distance)<velocity_cutoff)
-# good_trials = np.arange(image_pos_x.shape[0])[ind]
-# means = epochs_m.loc[epochs_m.index.get_level_values('trial').isin(good_trials),:].groupby(['cell']).mean()
-# for i in range(means.shape[0]):
-#     plt.plot(x, means.iloc[i], color='black')
-# plt.axhline(0, lw=0.5, color='k', alpha=0.5)
-# plt.axvline(0, lw=0.5, color='k', alpha=0.5)
-# plt.title('Motion < {} μm\nWalk < {}mm\n(N={})'.format(motion_cutoff, velocity_cutoff, sum(ind)))
-# plt.ylabel('Fluorescence')
-# plt.xlabel('Time (s)')
-
-# ax = fig.add_subplot(234)
-# # plt.fill_between(x, epochs_v.mean(axis=0)-epochs_v.sem(axis=0), epochs_v.mean(axis=0)+epochs_v.sem(axis=0), color='black', alpha=0.2)
-# plt.plot(x, epochs_v.mean(axis=0), color='black')
-# plt.axhline(0, lw=0.5, color='k', alpha=0.5)
-# plt.axvline(0, lw=0.5, color='k', alpha=0.5)
-# plt.ylabel('Distance (m)')
-# plt.xlabel('Time (s)')
-
-# ax = fig.add_subplot(235)
-# ind = (abs(image_pos_x)<10) & (abs(image_pos_y)<10) & (abs(image_motion_x)<motion_cutoff) & (abs(image_motion_y)<motion_cutoff) & (abs(distance)>velocity_cutoff)
-# good_trials = np.arange(image_pos_x.shape[0])[ind]
-# # plt.fill_between(x, epochs_v.loc[ind,:].mean(axis=0)-epochs_v.loc[ind,:].sem(axis=0), epochs_v.loc[ind,:].mean(axis=0)+epochs_v.loc[ind,:].sem(axis=0), color='black', alpha=0.2)
-# plt.plot(x, epochs_v.loc[ind,:].mean(axis=0), color='black')
-# plt.axhline(0, lw=0.5, color='k', alpha=0.5)
-# plt.axvline(0, lw=0.5, color='k', alpha=0.5)
-# plt.ylabel('Distance (m)')
-# plt.xlabel('Time (s)')
-
-# ax = fig.add_subplot(236)
-# ind = (abs(image_pos_x)<10) & (abs(image_pos_y)<10) & (abs(image_motion_x)<motion_cutoff) & (abs(image_motion_y)<motion_cutoff) & (abs(distance)<velocity_cutoff)
-# good_trials = np.arange(image_pos_x.shape[0])[ind]
-# # plt.fill_between(x, epochs_v.loc[ind,:].mean(axis=0)-epochs_v.loc[ind,:].sem(axis=0), epochs_v.loc[ind,:].mean(axis=0)+epochs_v.loc[ind,:].sem(axis=0), color='black', alpha=0.2)
-# plt.plot(x, epochs_v.loc[ind,:].mean(axis=0), color='black')
-# plt.axhline(0, lw=0.5, color='k', alpha=0.5)
-# plt.axvline(0, lw=0.5, color='k', alpha=0.5)
-# plt.ylabel('Distance (m)')
-# plt.xlabel('Time (s)')
-
-# sns.despine(trim=False, offset=3)
-# plt.tight_layout()
-# fig.savefig(os.path.join(fig_dir, 'vns_{}_{}_pulse_mean.pdf'.format(subj, ses)))
-
-
-# # parameter dependence:
-# for walk in [0,1]:
-#     if walk == 0:
-#         ind = (abs(image_pos_x)<10) & (abs(image_pos_y)<10) & (abs(image_motion_x)<motion_cutoff) & (abs(image_motion_y)<motion_cutoff) & (abs(distance)<velocity_cutoff)
-#     elif walk == 1:
-#         ind = (abs(image_pos_x)<10) & (abs(image_pos_y)<10) & (abs(image_motion_x)<motion_cutoff) & (abs(image_motion_y)<motion_cutoff) & (abs(distance)>velocity_cutoff)
-#     good_trials = np.arange(image_pos_x.shape[0])[ind]
-    
-#     epochs_mm = epochs.loc[(epochs.index.get_level_values('cell').isin(good_cells))&(epochs.index.get_level_values('trial').isin(good_trials)),:]
-    
-#     plot_nr = 1
-#     fig = plt.figure(figsize=(6,len(good_cells)*2)) 
-#     for cell, epochs_m in epochs_mm.groupby(['cell']):
-
-#         epochs_m = epochs_m.groupby(['amplitude', 'rate', 'width']).mean()
-        
-#         ax = fig.add_subplot(len(good_cells),3,plot_nr)
-#         means = epochs_m.groupby('amplitude').mean()
-#         sems = epochs_m.groupby('amplitude').sem()
-#         colors = sns.dark_palette("red", means.shape[0])
-#         for i in range(means.shape[0]):
-#             plt.fill_between(x, means.iloc[i]-sems.iloc[i], means.iloc[i]+sems.iloc[i], color=colors[i], alpha=0.2)
-#             plt.plot(x, means.iloc[i], color=colors[i])
-#         plt.axhline(0, lw=0.5, color='k', alpha=0.5)
-#         plt.axvline(0, lw=0.5, color='k', alpha=0.5)
-#         plt.ylabel('Fluorescence')
-#         plt.xlabel('Time (s)')
-#         if plot_nr == 1:
-#             plt.title('Amplitude')
-#         plot_nr += 1
-
-#         ax = fig.add_subplot(len(good_cells),3,plot_nr)
-#         means = epochs_m.groupby('width').mean()
-#         sems = epochs_m.groupby('width').sem()
-#         colors = sns.dark_palette("red", means.shape[0])
-#         for i in range(means.shape[0]):
-#             plt.fill_between(x, means.iloc[i]-sems.iloc[i], means.iloc[i]+sems.iloc[i], color=colors[i], alpha=0.2)
-#             plt.plot(x, means.iloc[i], color=colors[i])
-#         plt.axhline(0, lw=0.5, color='k', alpha=0.5)
-#         plt.axvline(0, lw=0.5, color='k', alpha=0.5)
-#         plt.ylabel('Fluorescence')
-#         plt.xlabel('Time (s)')
-#         if plot_nr == 2:
-#             plt.title('Width')
-#         plot_nr += 1
-        
-#         ax = fig.add_subplot(len(good_cells),3,plot_nr)
-#         means = epochs_m.groupby('rate').mean()
-#         sems = epochs_m.groupby('rate').sem()
-#         colors = sns.dark_palette("red", means.shape[0])
-#         for i in range(means.shape[0]):
-#             plt.fill_between(x, means.iloc[i]-sems.iloc[i], means.iloc[i]+sems.iloc[i], color=colors[i], alpha=0.2)
-#             plt.plot(x, means.iloc[i], color=colors[i])
-#         plt.axhline(0, lw=0.5, color='k', alpha=0.5)
-#         plt.axvline(0, lw=0.5, color='k', alpha=0.5)
-#         plt.ylabel('Fluorescence')
-#         plt.xlabel('Time (s)')
-#         if plot_nr == 3:
-#             plt.title('Rate')
-#         plot_nr += 1
-#     sns.despine(trim=False, offset=3)
-#     plt.tight_layout()
-#     fig.savefig(os.path.join(fig_dir, 'vns_{}_{}_pulse_parametric_{}.pdf'.format(subj, ses, walk)))
-
-# image_pos_x = np.concatenate(image_pos_x_)
-# image_pos_y = np.concatenate(image_pos_y_)
-# image_motion_x = np.concatenate(image_motion_x_)
-# image_motion_y = np.concatenate(image_motion_y_)
-# distance = np.concatenate(distance_)
-
-# for cutoff_motion in [10, 5, 4, 3, 2]:
-
-#     cutoff_pos = 10
-#     # cutoff_motion = 10
-#     cutoff_distance = 0.005
-
-#     fig = plt.figure(figsize=(6,4))
-#     ax = fig.add_subplot(231)
-#     ind = (abs(image_pos_x)<cutoff_pos)&(abs(image_pos_y)<cutoff_pos)
-#     ax.plot(image_pos_x, image_pos_y, 'o', ms=5, markeredgecolor='w', markeredgewidth=0.5)
-#     plt.axhline(cutoff_pos, lw=0.5, color='r')
-#     plt.axvline(cutoff_pos, lw=0.5, color='r')
-#     plt.axhline(-cutoff_pos, lw=0.5, color='r')
-#     plt.axvline(-cutoff_pos, lw=0.5, color='r')
-#     ax.set_xlabel('Image position x')
-#     ax.set_ylabel('Image position y')
-#     ax.set_title('{} / {} trials'.format(sum(ind), len(ind)))
-    
-#     ax = fig.add_subplot(232)
-#     ind = (abs(image_pos_x)<cutoff_pos)&(abs(image_pos_y)<cutoff_pos)&(image_motion_x<cutoff_motion)&(image_motion_y<cutoff_motion)
-#     ax.plot(image_motion_x, image_motion_y, 'o', ms=5, markeredgecolor='w', markeredgewidth=0.5)
-#     plt.axhline(cutoff_motion, lw=0.5, color='r')
-#     plt.axvline(cutoff_motion, lw=0.5, color='r')
-#     ax.set_xlabel('Image motion x') 
-#     ax.set_ylabel('Image motion y')
-#     ax.set_title('{} / {} trials'.format(sum(ind), len(ind)))
-
-#     ax = fig.add_subplot(233)
-#     ind = (abs(image_pos_x)<cutoff_pos)&(abs(image_pos_y)<cutoff_pos)&(image_motion_x<cutoff_motion)&(image_motion_y<cutoff_motion)&(abs(distance)<cutoff_distance)
-#     ax.plot((image_motion_x+image_motion_y)/2, abs(distance), 'o', ms=5, markeredgecolor='w', markeredgewidth=0.5)
-#     plt.axhline(cutoff_distance, lw=0.5, color='r')
-#     plt.axvline(cutoff_motion, lw=0.5, color='r')
-#     ax.set_xlabel('Image motion xy') 
-#     ax.set_ylabel('Walking distance')
-#     ax.set_title('{} / {} trials'.format(sum(ind), len(ind)))
-
-#     ax = fig.add_subplot(234)
-#     sns.kdeplot(image_pos_x, image_pos_y, shade=True, n_levels=15, ax=ax)
-#     plt.axhline(cutoff_pos, lw=0.5, color='r')
-#     plt.axvline(cutoff_pos, lw=0.5, color='r')
-#     plt.axhline(-cutoff_pos, lw=0.5, color='r')
-#     plt.axvline(-cutoff_pos, lw=0.5, color='r')
-#     ax.set_xlabel('Image position x')
-#     ax.set_ylabel('Image position y')
-#     ax.set_title('{} / {} trials'.format(sum(ind), len(ind)))
-#     ax = fig.add_subplot(235)
-#     sns.kdeplot(image_motion_x, image_motion_y, shade=True, n_levels=15, ax=ax)
-#     plt.axhline(cutoff_motion, lw=0.5, color='r')
-#     plt.axvline(cutoff_motion, lw=0.5, color='r')
-#     ax.set_xlabel('Image motion x')
-#     ax.set_ylabel('Image motion y')
-
-#     ax = fig.add_subplot(236)
-#     sns.kdeplot((image_motion_x+image_motion_y)/2, abs(distance), shade=True, n_levels=15, ax=ax)
-#     plt.axhline(cutoff_distance, lw=0.5, color='r')
-#     plt.axvline(cutoff_motion, lw=0.5, color='r')
-#     ax.set_xlabel('Image motion xy')
-#     ax.set_ylabel('Walking distance')
-
-#     plt.tight_layout()
-#     fig.savefig(os.path.join(fig_dir, 'preprocess_motion_params_{}.pdf'.format(cutoff_motion)),)
+    for X in ['ne_p', 'ne_c']:
+        fig = mediation_analysis(df_meta.loc[ind,:].reset_index(drop=True), X=X, pupil_measure=pupil_measure, calcium_measure=calcium_measure)
+        fig.savefig(os.path.join(fig_dir, 'mediation_{}_{}.pdf'.format(X, walk)))
