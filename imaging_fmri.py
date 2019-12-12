@@ -69,9 +69,9 @@ subjects = {
 }
 
 subjects = {
-    'C7A2': ['1',],
-    'C7A6': ['1', '7', '8',],  
-    'C1772': ['6', '7', '8',],
+    # 'C7A2': ['1',],
+    # 'C7A6': ['1', '7', '8',],  
+    # 'C1772': ['6', '7', '8',],
     'C1773': ['5', '6', '7', '8', '10',],
 }
 
@@ -184,22 +184,29 @@ for subj in subjects.keys():
                     
                     from matplotlib.colors import LinearSegmentedColormap
                     # cmap = LinearSegmentedColormap.from_list('custom', ['blue', 'lightblue', 'lightgrey', 'yellow', 'red'], N=100)
-                    cmap = LinearSegmentedColormap.from_list('custom', ['lightgrey', 'yellow', 'red'], N=100)
+                    # cmap = LinearSegmentedColormap.from_list('custom', ['yellow', 'red'], N=100)
+                    cmap = "summer_r"
+                    
 
                     ax.pcolormesh(np.arange(mean_img.shape[1]), np.arange(mean_img.shape[0]), mean_img, 
-                        vmin=np.percentile(mean_img.ravel(), 1), vmax=np.percentile(mean_img.ravel(), 99), cmap='Greys_r')
+                        vmin=np.percentile(mean_img.ravel(), 1), vmax=np.percentile(mean_img.ravel(), 99), cmap='Greys_r', rasterized=True)
                     if i == 1:
-                        ax.pcolormesh(np.arange(mean_img.shape[1]), np.arange(mean_img.shape[0]), np.ma.masked_array(t_obs, ~mask),
-                        vmin=threshold, vmax=threshold*2, cmap=cmap)
+                        cf = ax.pcolormesh(np.arange(mean_img.shape[1]), np.arange(mean_img.shape[0]), np.ma.masked_array(t_obs, ~mask),
+                        vmin=threshold, vmax=7, alpha=1, cmap=cmap, rasterized=True)
+                        # vmin=0, vmax=0.01, cmap=cmap)
+                        fig.colorbar(cf, ax=ax)
                     ax.set_aspect('equal')
-                    fig.savefig(os.path.join(temp_directory, 'meanImg_overlay_{}_{}.png'.format(group, i)), dpi=300)
-                
+                    # fig.savefig(os.path.join(temp_directory, 'meanImg_overlay_{}_{}.png'.format(group, i)), dpi=300)
+                    fig.savefig(os.path.join(temp_directory, 'meanImg_overlay_{}_{}.pdf'.format(group, i)), dpi=300)
+
                 # gif:
                 import imageio
                 images = []
                 for i in range(2):
                     images.append(imageio.imread(os.path.join(temp_directory, 'meanImg_overlay_{}_{}.png'.format(group, i))))
                 imageio.mimsave(os.path.join(temp_directory, 'meanImg_overlay_{}.gif'.format(group)), images, duration=0.5)
+
+                shell()
         
         mask = np.load(os.path.join(temp_directory, 'mask.npy'))
         f = np.load(os.path.join(temp_directory, 'F.npy'))

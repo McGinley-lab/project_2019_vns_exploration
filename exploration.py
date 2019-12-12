@@ -69,7 +69,7 @@ for cuff_type in ['intact', 'single', 'double']:
 
 preprocess = False
 if preprocess:
-    n_jobs = 24
+    n_jobs = 64
     res = Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(analyse_exploration_session)(*task) for task in tasks)
 
     # sort:
@@ -93,8 +93,8 @@ if preprocess:
 # load:
 print('loading data')
 epochs_v = pd.read_hdf(os.path.join(data_dir, 'epochs_v.hdf'), key='velocity')
-epochs_p = pd.read_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil')
-epochs_l = pd.read_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid')
+epochs_p = pd.read_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil') * 100
+epochs_l = pd.read_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid') * 100
 epochs_x = pd.read_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='eye_x')
 epochs_y = pd.read_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='eye_y')
 epochs_b = pd.read_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
@@ -102,6 +102,7 @@ df_meta = pd.read_csv(os.path.join(data_dir, 'meta_data.csv'))
 print('finished loading data')
 
 # round:
+df_meta['date'] = pd.to_datetime(df_meta.date, format='%Y/%m/%d', errors = 'coerce')
 df_meta['amplitude'] = np.round(df_meta['amplitude'], 3)
 df_meta['width'] = np.round(df_meta['width'], 3)
 df_meta['rate'] = np.round(df_meta['rate'], 3)
@@ -193,8 +194,8 @@ epochs = {
 ylims = {
             'velocity' : (-0.1, 0.8),
             'walk' : (0,0.75),
-            'pupil' : (-0.05, 0.3),
-            'eyelid' : (-0.01, 0.03),
+            'pupil' : (-5, 20),
+            'eyelid' : (-1, 3),
             'blink' : (0, 0.3),
             # 'eyemovement' : (0, 0.2),
             }
@@ -232,8 +233,12 @@ df_meta = df_meta.loc[df_meta['blink']==0,:].reset_index(drop=True)
 # indices:
 # --------
 ind_clean_w = ~(np.isnan(df_meta['velocity_1'])|np.isnan(df_meta['velocity_0']))
-ind_u = (df_meta['leak']<leak_cut_off)
-ind_g  = (df_meta['leak']>=leak_cut_off)
+
+ind_g = (df_meta['date']<'2018-10-14')
+ind_u = (df_meta['date']>'2018-10-14')
+ind_g.loc[(df_meta['leak']<leak_cut_off)] = False
+
+# ind_g = df_meta['date']<'2018-10-14'
 ind_s = ((df_meta['velocity_1'] >= velocity_cutoff[0]) & (df_meta['velocity_1'] <= velocity_cutoff[1])) & ~np.isnan(df_meta['velocity_1'])
 ind_w = ((df_meta['velocity_1'] < velocity_cutoff[0]) | (df_meta['velocity_1'] > velocity_cutoff[1])) & ~np.isnan(df_meta['velocity_1'])
 
@@ -329,63 +334,99 @@ fig.savefig(os.path.join(fig_dir, 'pupil_responses_g.pdf'))
 
 # velocity historgram:
 # --------------------
-fig = plt.figure(figsize=(4,4))
-ax = fig.add_subplot(221)
+fig = plt.figure(figsize=(8,2))
+ax = fig.add_subplot(141)
 ax.hist(df_meta.loc[ind_s&ind_u, 'velocity'], bins=50, density=False, histtype='stepfilled')
 plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
 plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
 plt.ylim(0,800)
-ax.set_title('{}%'.format(round(np.sum(ind_s[ind_u])/np.sum(ind_u)*100,1)))
+ax.set_title('{}%'.format(round(np.sum(ind_s[ind_u&ind_clean_w])/np.sum(ind_u&ind_clean_w)*100,1)))
 
-ax = fig.add_subplot(222)
+ax = fig.add_subplot(142)
 ax.hist(df_meta.loc[ind_s&ind_g, 'velocity'], bins=50, density=False, histtype='stepfilled')
 plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
 plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
 plt.ylim(0,800)
-ax.set_title('{}%'.format(round(np.sum(ind_s[ind_g])/np.sum(ind_g)*100,1)))
+ax.set_title('{}%'.format(round(np.sum(ind_s[ind_g&ind_clean_w])/np.sum(ind_g&ind_clean_w)*100,1)))
 
-ax = fig.add_subplot(223)
+ax = fig.add_subplot(143)
 ax.hist(df_meta.loc[ind_w&ind_u, 'velocity'], bins=50, density=False, histtype='stepfilled')
 plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
 plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
 plt.ylim(0,800)
-ax.set_title('{}%'.format(round(np.sum(ind_w[ind_u])/np.sum(ind_u)*100,1)))
+ax.set_title('{}%'.format(round(np.sum(ind_w[ind_u&ind_clean_w])/np.sum(ind_u&ind_clean_w)*100,1)))
 
-ax = fig.add_subplot(224)
+ax = fig.add_subplot(144)
 ax.hist(df_meta.loc[ind_w&ind_g, 'velocity'], bins=50, density=False, histtype='stepfilled')
 plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
 plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
 plt.ylim(0,800)
-ax.set_title('{}%'.format(round(np.sum(ind_w[ind_g])/np.sum(ind_g)*100,1)))
+ax.set_title('{}%'.format(round(np.sum(ind_w[ind_g&ind_clean_w])/np.sum(ind_g&ind_clean_w)*100,1)))
 plt.tight_layout()
 sns.despine(trim=False, offset=3)
 fig.savefig(os.path.join(fig_dir, 'velocity_hist.pdf'))
 
-# for Matt:
-df = df_meta.loc[(df_meta['cuff_type']=='intact')&ind_u, ['pupil_c2', 'charge', 'amplitude', 'width', 'rate']]
-df = df.rename(columns={'pupil_c2': 'pupil',})
-df['charge'] = np.round(df['charge'],3)
-df['amplitude'] = np.round(df['amplitude'],3)
-df.to_csv(os.path.join(fig_dir, 'data_exploration.csv'))
+# # for Matt:
+# df = df_meta.loc[(df_meta['cuff_type']=='intact')&ind_u, ['pupil_c2', 'charge', 'amplitude', 'width', 'rate']]
+# df = df.rename(columns={'pupil_c2': 'pupil',})
+# df['charge'] = np.round(df['charge'],3)
+# df['amplitude'] = np.round(df['amplitude'],3)
+# df.to_csv(os.path.join(fig_dir, 'data_exploration.csv'))
 
-# 3d plot:
-fig = vns_analyses.hypersurface(df_meta.loc[ind_u & (df_meta['cuff_type']=='intact'),:].reset_index(), z_measure='pupil_c')
-fig.savefig(os.path.join(fig_dir, '3d_surface_pupil.pdf'))
+# # variance explained charge:
+# ind = (df_meta['cuff_type'] == 'intact') & ind_u
+# x = np.array(df_meta.loc[ind,['charge', 'rate']])
+# y = np.array(df_meta.loc[ind,['pupil_c']]).ravel()
+# func = vns_analyses.log_logistic_3d
+# popt, pcov = curve_fit(func, x, y, 
+#                 method='dogbox', bounds=([0, 0, 0, 0, 0,], [np.inf, np.inf, np.inf, np.inf, np.inf,]))
+# predictions = func(x, *popt) 
+# r2 = (sp.stats.pearsonr(y, predictions)[0]**2) * 100
+# print(r2)
 
-# variance explained charge:
-ind = (df_meta['cuff_type'] == 'intact') & ind_u
-x = np.array(df_meta.loc[ind,['charge', 'rate']])
-y = np.array(df_meta.loc[ind,['pupil_c']]).ravel()
-func = vns_analyses.log_logistic_3d
-popt, pcov = curve_fit(func, x, y, 
-                method='dogbox', bounds=([0, 0, 0, 0, 0,], [np.inf, np.inf, np.inf, np.inf, np.inf,]))
-predictions = func(x, *popt) 
-r2 = (sp.stats.pearsonr(y, predictions)[0]**2) * 100
-print(r2)
+fig = plt.figure(figsize=(8,8))
+d = df_meta.loc[(df_meta['width']>0.2),:].groupby(['subj_idx', 'date', 'amplitude_bin']).mean().reset_index()
+d['leak_fraction'] = 1 - (d['amplitude_m']/d['amplitude'])
+plt_nr = 1
+for measure in ['leak_fraction', 'impedance']:
+    ax = fig.add_subplot(2,1,plt_nr)
+    for amp, dd in d.groupby(['amplitude_bin']):
+        dd = dd.sort_values('date', ascending=True)
+        d_mean = dd.groupby('date').mean().reset_index()
+        d_sem = dd.groupby('date').sem().reset_index()
+        plt.errorbar(d_mean['date'], d_mean[measure], yerr=d_sem[measure], fmt='-o', label='bin {}'.format(amp), alpha=0.5)
+    plt.ylabel(measure)
+    plt.legend()
+    plt_nr += 1
+plt.tight_layout()
+sns.despine(trim=False, offset=3)  
+fig.savefig(os.path.join(fig_dir, 'preprocess', 'leak_fractions_time.pdf'))
+
+def leak_fractions(df):
+    d = df.loc[(df['width']>0.2),:].groupby(['subj_idx', 'session', 'amplitude_bin']).mean().reset_index()
+    d['leak_fraction'] = 1 - (d['amplitude_m']/d['amplitude'])
+    fig = plt.figure(figsize=(4,2))
+    ax = fig.add_subplot(121)
+    for (subj, ses), dd in d.groupby(['subj_idx', 'session']):
+        plt.plot(dd['amplitude'], dd['leak_fraction'])
+    plt.xlabel('Amplitude intended')
+    plt.ylabel('Leak fraction')
+    ax = fig.add_subplot(122)
+    d = d.groupby(['subj_idx', 'session']).mean().reset_index()
+    ind = (~np.isnan(d['impedance']))# & (d['amplitude_bin']==4)
+    plt.scatter(d.loc[ind,'impedance'], d.loc[ind,'leak_fraction'])
+    plt.xlabel('Impedance')
+    plt.ylabel('Leak fraction')
+    plt.tight_layout()
+    sns.despine(trim=False, offset=3)    
+    return fig
 
 for ind, title in zip([ind_u, ind_g,], ['u', 'g',]):
     fig = vns_analyses.plot_param_preprocessing(df_meta.loc[ind,:])
-    fig.savefig(os.path.join(fig_dir, 'preprocess', 'average_{}.pdf'.format(title)))   
+    fig.savefig(os.path.join(fig_dir, 'preprocess', 'average_{}.pdf'.format(title)))
+
+    fig = leak_fractions(df_meta.loc[ind,:])
+    fig.savefig(os.path.join(fig_dir, 'preprocess', 'leak_fractions_{}.pdf'.format(title)))
 
 for cuff_type in ['intact', 'single', 'double']:
     for ind, title in zip([ind_u, ind_g,], ['u', 'g',]):
@@ -393,6 +434,66 @@ for cuff_type in ['intact', 'single', 'double']:
         ind = ind & cuff_ind
         fig = vns_analyses.plot_param_preprocessing(df_meta.loc[ind,:])
         fig.savefig(os.path.join(fig_dir, 'preprocess', 'average_{}_{}.pdf'.format(title, cuff_type,)))
+
+        fig = leak_fractions(df_meta.loc[ind,:])
+        fig.savefig(os.path.join(fig_dir, 'preprocess', 'leak_fractions_{}_{}.pdf'.format(title, cuff_type,)))
+
+        fig = plt.figure()
+        sns.regplot(df_meta.loc[ind,'amplitude'], df_meta.loc[ind,'amplitude_m'])
+        plt.title('{}_{}'.format(title, cuff_type,))
+        fig.savefig(os.path.join(fig_dir, 'preprocess', 'amplitude_scatters_{}_{}.pdf'.format(title, cuff_type,)))
+
+# normalize per session:
+means = df_meta.loc[(df_meta['cuff_type']=='intact')&ind_u].groupby(['subj_idx', 'session'])['pupil_c'].mean().reset_index()
+stds = df_meta.loc[(df_meta['cuff_type']=='intact')&ind_u].groupby(['subj_idx', 'session'])['pupil_c'].std().reset_index()
+cv = stds.copy()
+cv['pupil_c'] = cv['pupil_c'] / means['pupil_c']
+
+fig = plt.figure(figsize=(2,6))
+ax = fig.add_subplot(311)
+plt.hist(means['pupil_c'], bins=15)
+plt.xlabel('mean pupil')
+ax = fig.add_subplot(312)
+plt.hist(stds['pupil_c'], bins=15)
+plt.xlabel('std pupil')
+ax = fig.add_subplot(313)
+plt.hist(cv['pupil_c'], bins=5000)
+plt.xlim(-30,30)
+plt.xlabel('Cov. variation')
+plt.tight_layout()
+sns.despine(trim=False, offset=3)
+fig.savefig(os.path.join(fig_dir, 'varation_across_session.pdf'))
+
+# means = df_meta.loc[(df_meta['cuff_type']=='intact')].groupby(['subj_idx', 'session'])[['pupil_c', 'leak']].mean().reset_index()
+
+
+# for ct in ['intact', 'single', 'double']:
+
+#     means = df_meta.loc[(df_meta['cuff_type']==ct)].groupby(['subj_idx', 'session'])[['pupil_c', 'leak']].mean().reset_index()
+#     fig = plt.figure(figsize=(2,2))
+#     sns.regplot(means['leak'], means['pupil_c'])
+#     r,p = sp.stats.pearsonr(means['leak'], means['pupil_c'])
+#     plt.title('r = {}, p = {}'.format(round(r,3), round(p,3)))
+#     plt.xlabel('Leak')
+#     plt.ylabel('Pupil response')
+#     plt.tight_layout()
+#     sns.despine(trim=False, offset=3)
+#     fig.savefig(os.path.join(fig_dir, 'leak_correlation_{}.pdf'.format(ct)))
+
+for subj in df_meta['subj_idx'].unique():
+    for ses in df_meta['session'].unique():
+        ind = (df_meta['subj_idx'] == subj) & (df_meta['session'] == ses)
+        if sum(ind) > 0:
+            print('yes')
+            # df_meta.loc[ind, 'pupil_c3'] = ((df_meta.loc[ind, 'pupil_c'] - df_meta.loc[ind, 'pupil_c'].mean()) / df_meta.loc[ind, 'pupil_c'].std()) + 1
+            # df_meta.loc[ind, 'pupil_c3'] = df_meta.loc[ind, 'pupil_c'] / df_meta.loc[ind, 'pupil_c'].max()
+            # df_meta.loc[ind, 'pupil_c3'] = df_meta.loc[ind, 'pupil_c'] / df_meta.loc[ind, 'pupil_c'].mean()
+            df_meta.loc[ind, 'pupil_c3'] = df_meta.loc[ind, 'pupil_c'] / df_meta.loc[ind, 'pupil_c'].median()
+            
+            
+            # df_meta.loc[ind, 'eyelid_c3'] = df_meta.loc[ind, 'eyelid_c2'] / df_meta.loc[ind, 'eyelid_c2'].std()
+            # df_meta.loc[ind, 'velocity_c3'] = df_meta.loc[ind, 'velocity_c2'] / df_meta.loc[ind, 'velocity_c2'].std()
+            # df_meta.loc[ind, 'walk_c3'] = df_meta.loc[ind, 'walk_c2'] / df_meta.loc[ind, 'walk_c2'].std()
 
 # time courses:
 # -------------
@@ -402,9 +503,8 @@ for measure in ['pupil', 'velocity', 'walk', 'eyelid',]:
     for cuff_type in ['intact', 'single', 'double']:
     # for cuff_type in ['intact']:
         cuff_ind = np.array(df_meta['cuff_type'] == cuff_type)
-        # for ind, title in zip([ind_u, ind_g, ind_u&ind_s, ind_u&ind_w], ['u', 'g', 'us', 'uw']):
-        for ind, title in zip([ind_u, ind_g,], ['u', 'g',]):
-            
+        for ind, title in zip([ind_u, ind_g], ['u', 'g']):
+        # for ind, title in zip([ind_u], ['u']):
             if not os.path.exists(os.path.join(fig_dir, measure, title)):
                 os.makedirs(os.path.join(fig_dir, measure, title))
             
@@ -420,14 +520,16 @@ for measure in ['pupil', 'velocity', 'walk', 'eyelid',]:
                 ylim = (ylim[0], ylim[1]/3)
 
             if not measure == 'walk':
-                if measure == 'velocity':
-                    fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[ind,::10], timewindows=timewindows, ylabel=measure+'_1', ylim=(-ylim[1],ylim[1]))
-                else:
-                    fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[ind,::10], timewindows=timewindows, ylabel=measure+'_1', ylim=ylim)
+                x = np.array(epochs[measure].columns, dtype=float)
+                fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[:,(x>=-20)&(x<=40)].loc[ind,::10], timewindows=timewindows, ylabel=measure+'_1', ylim=ylim)
                 fig.savefig(os.path.join(fig_dir, measure, title, 'timecourses_{}_{}_{}.pdf'.format(title, cuff_type, measure)))
 
-            for measure_ext in ['', '_c', '_c2']:
+            for measure_ext in ['', '_c', '_c2',]:
+            # for measure_ext in ['_c3']:
                 
+                if measure_ext == '_c3':
+                    ylim = (0,3)
+
                 fig = vns_analyses.plot_scalars(df_meta.loc[ind &  ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
                 fig.savefig(os.path.join(fig_dir, measure, title, 'scalars_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
                 
@@ -443,3 +545,8 @@ for measure in ['pupil', 'velocity', 'walk', 'eyelid',]:
                 except:
                     pass
 
+                try:
+                    fig = vns_analyses.hypersurface2(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], z_measure=measure+measure_ext, ylim=(0,ylim[1]))
+                    fig.savefig(os.path.join(fig_dir, measure, title, '3dplot_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
+                except:
+                    pass

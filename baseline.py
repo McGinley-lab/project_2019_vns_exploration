@@ -79,8 +79,8 @@ if preprocess:
 # load:
 print('loading data')
 epochs_v = pd.read_hdf(os.path.join(data_dir, 'epochs_v.hdf'), key='velocity')
-epochs_p = pd.read_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil')
-epochs_l = pd.read_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid')
+epochs_p = pd.read_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil') * 100
+epochs_l = pd.read_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid') * 100
 epochs_x = pd.read_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='eye_x')
 epochs_y = pd.read_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='eye_y')
 epochs_b = pd.read_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
@@ -141,8 +141,8 @@ epochs = {
 ylims = {
             'velocity' : (-0.1, 0.5),
             'walk' : (0,1),
-            'pupil' : (-0.05, 0.3),
-            'eyelid' : (-0.01, 0.03),
+            'pupil' : (-5, 30),
+            'eyelid' : (-1, 3),
             'blink' : (0, 0.3),
             # 'eyemovement' : (0, 0.2),
             }
@@ -195,9 +195,6 @@ fig = vns_analyses.plot_pupil_responses(df_meta, epochs_p.loc[:, ::10], bins=bin
 fig.savefig(os.path.join(fig_dir, 'pupil_timecourses.pdf'))
 
 # plot 1 -- baseline dependence:
-
-
-
 fig = plt.figure(figsize=(6,2))
 for i, measure in enumerate(['pupil', 'pupil_c', 'pupil_c2']):
     means = df_meta.groupby('bins_pupil')[['pupil_c2', 'pupil_c', 'pupil', 'pupil_0']].mean()
@@ -208,6 +205,9 @@ for i, measure in enumerate(['pupil', 'pupil_c', 'pupil_c2']):
 
     func = vns_analyses.quadratic
     popt,pcov = curve_fit(func, means['pupil_0'],means[measure],)
+    
+    predictions = func(df_meta['pupil_0'], *popt)
+    r, p = sp.stats.pearsonr(predictions, df_meta['pupil_c'])
     plt.plot(x, func(x,*popt), '--', color='r')
     
     # func = vns_analyses.gaus
@@ -216,7 +216,7 @@ for i, measure in enumerate(['pupil', 'pupil_c', 'pupil_c2']):
     
     plt.xlabel('Baseline pupil')
     plt.ylabel('Pupil response')
-    plt.title(measure)
+    plt.title('r = {}, p = {}'.format(round(r,3), round(p,3)))
 plt.tight_layout()
 sns.despine(trim=False, offset=3)
 fig.savefig(os.path.join(fig_dir, 'pupil_state_dependence.pdf'))

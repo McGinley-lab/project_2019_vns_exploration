@@ -35,42 +35,65 @@ sns.set(style='ticks', font='Arial', font_scale=1, rc={
     'ytick.color':'Black',} )
 sns.plotting_context()
 
-def mediation_analysis(df, X, pupil_measure, calcium_measure):
-    
-    from rpy2.robjects import pandas2ri
+def mediation_analysis(df, X, Y, M, bootstrap=True, n_boot=1000, n_jobs=12):
 
-    res = lavaan(df=df.loc[~np.isnan(df[pupil_measure]),:], X=X, Y=pupil_measure, M=calcium_measure, C=False, zscore=True,)
-    res = pandas2ri.ri2py(res)
-    print(res)
+    df = df.loc[~np.isnan(df[Y]),:].reset_index(drop=True)
+
+    if bootstrap:
+        res = Parallel(n_jobs=n_jobs, verbose=0, backend='loky')(delayed(lavaan)(df, X, Y, M, False, True, True) for _ in range(n_boot))
+        res = pd.concat(res)
+        p_values = [(res.loc[res['label']=='total','est']<0).mean(),
+                    (res.loc[res['label']=='ab','est']<0).mean(),
+                    (res.loc[res['label']=='c','est']<0).mean(),]
+
+        # res_sem = ((res.loc[:,['label', 'est']].groupby('label').quantile(.84)-res.loc[:,['label', 'est']].groupby('label').quantile(.16))/2).reset_index()
+        res_sem = ((res.loc[:,['label', 'est']].groupby('label').quantile(.975)-res.loc[:,['label', 'est']].groupby('label').quantile(.025))/2).reset_index()
+        res = res.groupby('label').mean().reset_index()
+        print(res)
+    else:
+        res = lavaan(df=df, X=X, Y=Y, M=M, C=False, zscore=True,).groupby('label').mean()
+        print(res)
 
     y = np.array([float(res.loc[res['label']=='total','est']), float(res.loc[res['label']=='ab','est']), float(res.loc[res['label']=='c','est'])])
-    y1 = np.array([float(res.loc[res['label']=='total','ci.lower']), float(res.loc[res['label']=='ab','ci.lower']), float(res.loc[res['label']=='c','ci.lower'])])
-    y2 = np.array([float(res.loc[res['label']=='total','ci.upper']), float(res.loc[res['label']=='ab','ci.upper']), float(res.loc[res['label']=='c','ci.upper'])])
-    ci = y2-y1
+    if bootstrap:
+        ci = np.array([float(res_sem.loc[res_sem['label']=='total','est']), float(res_sem.loc[res_sem['label']=='ab','est']), float(res_sem.loc[res_sem['label']=='c','est'])])
+    else:
+        y1 = np.array([float(res.loc[res['label']=='total','ci.lower']), float(res.loc[res['label']=='ab','ci.lower']), float(res.loc[res['label']=='c','ci.lower'])])
+        y2 = np.array([float(res.loc[res['label']=='total','ci.upper']), float(res.loc[res['label']=='ab','ci.upper']), float(res.loc[res['label']=='c','ci.upper'])])
+        ci = (y2-y1)/2
 
     fig = plt.figure(figsize=(8,2))
     ax = fig.add_subplot(141)
     plt.bar([0,1,2], y, yerr=ci)
+    for x,p in zip([0,1,2],p_values):
+        plt.text(x=x, y=max(y), s=round(p,3), size=6)
     plt.xticks([0,1,2], ['c','a*b',"c'"])
     ax = fig.add_subplot(142)
-    sns.regplot(df[X], df[pupil_measure], line_kws={'color': 'red'})
+    r,p = sp.stats.pearsonr(df[X], df[Y])
+    sns.regplot(df[X], df[Y], line_kws={'color': 'red'})
+    plt.title('r = {}, p = {}'.format(round(r,2), round(p,3)))
     ax = fig.add_subplot(143)
-    sns.regplot(df[X], df[calcium_measure], line_kws={'color': 'red'})
+    r,p = sp.stats.pearsonr(df[X], df[M])
+    sns.regplot(df[X], df[M], line_kws={'color': 'red'})
+    plt.title('r = {}, p = {}'.format(round(r,2), round(p,3)))
     ax = fig.add_subplot(144)
-    sns.regplot(df[pupil_measure], df[calcium_measure], line_kws={'color': 'red'})
+    r,p = sp.stats.pearsonr(df[M], df[Y])
+    sns.regplot(df[M], df[Y], line_kws={'color': 'red'})
+    plt.title('r = {}, p = {}'.format(round(r,2), round(p,3)))
     sns.despine(trim=False, offset=3)
     plt.tight_layout()
     
     return fig
 
-
-def lavaan(df, X, Y, M, C=False, zscore=True,):
+def lavaan(df, X, Y, M, C=False, zscore=True, resample=False):
     
     import rpy2.robjects as robjects
     from rpy2.robjects import pandas2ri
     from rpy2.robjects import default_converter
     from rpy2.robjects.conversion import localconverter
 
+    if resample:
+        df = df.iloc[np.random.randint(df.shape[0], size=df.shape[0])].reset_index(drop=True)  
 
     df['X'] = df[X].copy()
     df['Y'] = df[Y].copy()
@@ -84,9 +107,9 @@ def lavaan(df, X, Y, M, C=False, zscore=True,):
     robjects.r('library(lavaan)')
     robjects.globalenv["data_s"] = df_r
 
-    print(robjects.r("typeof(data_s$X)"))
-    print(robjects.r("typeof(data_s$Y)"))
-    print(robjects.r("typeof(data_s$M)"))
+    # print(robjects.r("typeof(data_s$X)"))
+    # print(robjects.r("typeof(data_s$Y)"))
+    # print(robjects.r("typeof(data_s$M)"))
 
     # zscore:
     if zscore:
@@ -96,15 +119,17 @@ def lavaan(df, X, Y, M, C=False, zscore=True,):
 
     if C == True:
         robjects.r("model = 'Y ~ c*X + C\nM ~ a*X + C\nY ~ b*M\nab := a*b\ntotal := c + (a*b)'")
-        robjects.r('fit = sem(model, data=data_s, se="bootstrap")')
+        robjects.r('fit = sem(model, data=data_s)')
         c = np.array(pandas2ri.ri2py(robjects.r('coef(fit)')))[np.array([0,2,4])]
     else:
         robjects.r("model = 'Y ~ c*X\nM ~ a*X\nY ~ b*M\nab := a*b\ntotal := c + (a*b)'")
-        robjects.r('fit = sem(model, data=data_s, se="bootstrap")')
+        robjects.r('fit = sem(model, data=data_s)')
         c = pandas2ri.ri2py(robjects.r('coef(fit)')[0:3])
     
     c = robjects.r("parameterEstimates(fit)")
     # c = robjects.r("summary(fit)")
+
+    c = pandas2ri.ri2py(c)
 
     return c
 
@@ -387,13 +412,13 @@ if preprocess:
     epochs_l.to_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid')
     epochs_l.to_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
 
-epochs_c = pd.read_hdf(os.path.join(data_dir, 'epochs_c.hdf'), key='calcium')
+epochs_c = pd.read_hdf(os.path.join(data_dir, 'epochs_c.hdf'), key='calcium') * 100
 epochs_x = pd.read_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='x_motion')
 epochs_y = pd.read_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='y_motion')
 epochs_corrXY = pd.read_hdf(os.path.join(data_dir, 'epochs_corrXY.hdf'), key='corrXY')
 epochs_v = pd.read_hdf(os.path.join(data_dir, 'epochs_v.hdf'), key='velocity')
-epochs_p = pd.read_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil')
-epochs_l = pd.read_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid')
+epochs_p = pd.read_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil') * 100
+epochs_l = pd.read_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid') * 100
 epochs_b = pd.read_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
 
 # settings
@@ -408,6 +433,7 @@ epochs_c = epochs_c.set_index(['charge', 'charge_ps'], append=True)
 
 # meta data:
 df_meta = epochs_c.index.to_frame(index=False)
+df_meta['amplitude_bin'] = df_meta['amplitude'].copy()
 
 # make scalars:
 # -------------
@@ -420,9 +446,9 @@ timewindows = {
             'velocity_0' : [(-0.1,0), (-10.1,-10)],
             'velocity_1' : [(9.9,10), (-0.1,0)],
 
-            'pupil_-1' : [(-60, -30), (None, None)],
-            'pupil_0' : [(-30, 0), (None, None)],
-            'pupil_1' : [(10, 40), (None, None)],
+            'pupil_-1' : [(-50, -30), (None, None)],
+            'pupil_0' : [(-20, 0), (None, None)],
+            'pupil_1' : [(10, 30), (None, None)],
 
             'blink_-3' : [(-27.5, -22.5), (None, None)],
             'blink_-2' : [(-20, -15), (None, None)],
@@ -468,11 +494,11 @@ epochs = {
 ylims = {
             'velocity' : (-0.1, 0.5),
             'walk' : (0,1),
-            'pupil' : (-0.05, 0.5),
-            'eyelid' : (-0.01, 0.1),
+            'pupil' : (-5, 40),
+            'eyelid' : (-1, 10),
             'blink' : (0, 0.3),
             # 'eyemovement' : (0, 0.2),
-            'calcium' : (-0.1, 0.6),
+            'calcium' : (-10, 50),
             'imagex' : (0, 5),
             'imagey' : (0, 5),
             'corrXY' : (-0.01, 0.04),
@@ -500,7 +526,6 @@ df_meta['walk_1'] = ((df_meta['velocity_1'] < velocity_cutoff[0])|(df_meta['velo
 # add image motion scalars:
 df_meta['imagex'] = abs(df_meta['imagex_1']-df_meta['imagex_0'])
 df_meta['imagey'] = abs(df_meta['imagey_1']-df_meta['imagey_0'])
-
 df_meta['corrXY'] = df_meta['corrXY_1']-df_meta['corrXY_0']
 
 # throw away weird trial:
@@ -524,38 +549,25 @@ epochs_c = epochs_c.loc[~remove,:]
 # indices:
 ind_clean_w = ~(np.isnan(df_meta['velocity_1'])|np.isnan(df_meta['velocity_0']))
 
-group3 = (
-        ((epochs_c.index.get_level_values('amplitude')==0.9)&(epochs_c.index.get_level_values('width')==0.4)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.9)&(epochs_c.index.get_level_values('width')==0.2)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.7)&(epochs_c.index.get_level_values('width')==0.4))
-)
-
-group2 = (
-        ((epochs_c.index.get_level_values('amplitude')==0.9)&(epochs_c.index.get_level_values('width')==0.1)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.7)&(epochs_c.index.get_level_values('width')==0.2)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.7)&(epochs_c.index.get_level_values('width')==0.1)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.5)&(epochs_c.index.get_level_values('width')==0.4)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.5)&(epochs_c.index.get_level_values('width')==0.2)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.3)&(epochs_c.index.get_level_values('width')==0.4))
-)
-
-group1 = (
-        ((epochs_c.index.get_level_values('amplitude')==0.5)&(epochs_c.index.get_level_values('width')==0.1)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.3)&(epochs_c.index.get_level_values('width')==0.2)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.3)&(epochs_c.index.get_level_values('width')==0.1)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.1)&(epochs_c.index.get_level_values('width')==0.4)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.1)&(epochs_c.index.get_level_values('width')==0.2)) | 
-        ((epochs_c.index.get_level_values('amplitude')==0.1)&(epochs_c.index.get_level_values('width')==0.1))
-)
+# add variables
+charge_edges = [0, 0.045, 0.085, 0.16, 0.32, 1]
+# df_meta['calcium'] = df_meta['calcium_1']-df_meta['calcium_0']
+df_meta['amplitude_bin'] = df_meta['amplitude'].copy()
+df_meta['width_bin'] = df_meta['width'].copy()
+df_meta['rate_bin'] = df_meta['rate'].copy()
+df_meta['charge_bin'] = pd.cut(df_meta['charge'], charge_edges, labels=False)
+df_meta['charge_ps_bin'] = df_meta['charge_ps'].copy()
 
 epochs_c['group'] = 0
-epochs_c.loc[group1, 'group'] = 1
-epochs_c.loc[group2, 'group'] = 2
-epochs_c.loc[group3, 'group'] = 3
+epochs_c.loc[np.array(df_meta['charge_bin']==0), 'group'] = 1
+epochs_c.loc[np.array((df_meta['charge_bin']>0)&(df_meta['charge_bin']<5)), 'group'] = 2
+epochs_c.loc[np.array(df_meta['charge_bin']==4), 'group'] = 3
 epochs_c = epochs_c.set_index('group', append=True)
 
 # correct scalars:
 df_meta, figs = vns_analyses.correct_scalars(df_meta, group=np.ones(df_meta.shape[0], dtype=bool), velocity_cutoff=velocity_cutoff, ind_clean_w=ind_clean_w)
+
+# shell()
 
 figs[0].savefig(os.path.join(fig_dir, 'pupil_reversion_to_mean1.pdf'))
 figs[1].savefig(os.path.join(fig_dir, 'pupil_reversion_to_mean2.pdf'))
@@ -643,13 +655,6 @@ epochs = {
             }
 
 
-# df_meta['calcium'] = df_meta['calcium_1']-df_meta['calcium_0']
-df_meta['amplitude_bin'] = df_meta['amplitude'].copy()
-df_meta['width_bin'] = df_meta['width'].copy()
-df_meta['rate_bin'] = df_meta['rate'].copy()
-df_meta['charge_bin'] = pd.cut(df_meta['charge'], [0,0.035,0.065,0.105,0.19,1], labels=False)
-df_meta['charge_ps_bin'] = df_meta['charge_ps'].copy()
-
 # # regress out image motion from calcium traces:
 # import statsmodels.api as sm
 # X = df_meta[["imagex", "imagey"]]
@@ -658,15 +663,16 @@ df_meta['charge_ps_bin'] = df_meta['charge_ps'].copy()
 #     model = sm.OLS(y, X).fit()
 #     df_meta[y_measure] = model.resid + df_meta[y_measure].mean()
 
+
 imp.reload(vns_analyses)
-for measure in ['pupil', 'velocity', 'walk', 'eyelid', 'calcium', 'corrXY']:
+for measure in ['calcium', 'pupil', 'velocity', 'walk', 'eyelid', 'corrXY']:
 # for measure in ['pupil', 'calcium', 'imagex', 'imagey']:
 # for measure in ['pupil']:
 
     if not os.path.exists(os.path.join(fig_dir, measure)):
         os.makedirs(os.path.join(fig_dir, measure))
 
-    for walk in [2,1,0]:
+    for walk in [2,0]:
         if walk == 0:
             ind = np.array(abs(df_meta['velocity'])<velocity_cutoff[1])
         elif walk == 1:
@@ -682,10 +688,7 @@ for measure in ['pupil', 'velocity', 'walk', 'eyelid', 'calcium', 'corrXY']:
             ylim = (ylim[0], ylim[1]/3)
 
         if not measure == 'walk':
-            if measure == 'velocity':
-                fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[ind, ::10], timewindows=timewindows, ylabel=measure+'_1', ylim=(-ylim[1],ylim[1]))
-            else:
-                fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[ind, ::10], timewindows=timewindows, ylabel=measure+'_1', ylim=ylim)
+            fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[:,(x>=-20)&(x<=40)].loc[ind, ::10], timewindows=timewindows, ylabel=measure+'_1', ylim=ylim)
             fig.savefig(os.path.join(fig_dir, measure, 'timecourses_{}_{}.pdf'.format(measure, walk)))
         
         if measure == 'corrXY':
@@ -703,7 +706,7 @@ for measure in ['pupil', 'velocity', 'walk', 'eyelid', 'calcium', 'corrXY']:
             fig = vns_analyses.plot_scalars(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim, p0=p0)
             fig.savefig(os.path.join(fig_dir, measure, 'scalars_{}_{}.pdf'.format(measure+measure_ext, walk)))
 
-            fig = vns_analyses.plot_scalars2(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
+            fig = vns_analyses.plot_scalars2(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim, p0=p0)
             fig.savefig(os.path.join(fig_dir, measure, 'scalars2_{}_{}.pdf'.format(measure+measure_ext, walk)))
 
             fig = vns_analyses.plot_scalars3(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
@@ -712,6 +715,12 @@ for measure in ['pupil', 'velocity', 'walk', 'eyelid', 'calcium', 'corrXY']:
             try:
                 fig = vns_analyses.plot_pupil_responses_matrix(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, vmin=-ylim[1], vmax=ylim[1])
                 fig.savefig(os.path.join(fig_dir, measure, 'matrix_{}_{}.pdf'.format(measure+measure_ext, walk)))
+            except:
+                pass
+            
+            try:
+                fig = vns_analyses.hypersurface2(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], z_measure=measure+measure_ext, ylim=(0,ylim[1]))
+                fig.savefig(os.path.join(fig_dir, measure, '3dplot_{}_{}.pdf'.format(measure+measure_ext, walk)))
             except:
                 pass
         
@@ -776,14 +785,12 @@ for measure in ['pupil', 'velocity', 'walk', 'eyelid', 'calcium', 'corrXY']:
             plt.tight_layout()
             fig.savefig(os.path.join(fig_dir, measure, 'vns_pulse_{}_y.pdf'.format(walk)))
 
-
 # 3d plot:
-
 pupil_measure = 'pupil_c'
 calcium_measure = 'calcium_c'
 
-fig = vns_analyses.hypersurface(df_meta.loc[ind,:].reset_index(drop=True), z_measure=pupil_measure)
-fig.savefig(os.path.join(fig_dir, '3d_surface_pupil.pdf'))
+# fig = vns_analyses.hypersurface(df_meta, z_measure=pupil_measure)
+# fig.savefig(os.path.join(fig_dir, '3d_surface_pupil.pdf'))
 
 from sklearn.model_selection import KFold
 from scipy.optimize import curve_fit
@@ -797,13 +804,15 @@ fold_nr = 1
 for train_index, test_index in kf.split(df_meta):
     print('fold {}'.format(fold_nr))
     # print("TRAIN:", train_index, "TEST:", test_index)
-    popt, pcov = curve_fit(func, np.array(df_meta[['charge', 'rate']].iloc[train_index]), np.array(df_meta[pupil_measure].iloc[train_index]),)
+    popt, pcov = curve_fit(func, np.array(df_meta[['charge', 'rate']].iloc[train_index]), np.array(df_meta[pupil_measure].iloc[train_index]),
+                            method='trf', bounds=([0, 0, 0, 0, 0,], [np.inf, np.inf, np.inf, np.inf, np.inf,]), max_nfev=10000)
     df_meta.loc[test_index, 'ne_p'] = func(np.array(df_meta.loc[test_index,['charge', 'rate']]) ,*popt)
-    popt, pcov = curve_fit(func, np.array(df_meta[['charge', 'rate']].iloc[train_index]), np.array(df_meta[calcium_measure].iloc[train_index]),)
+    popt, pcov = curve_fit(func, np.array(df_meta[['charge', 'rate']].iloc[train_index]), np.array(df_meta[calcium_measure].iloc[train_index]),
+                            method='trf', bounds=([0, 0, 0, 0, 0,], [np.inf, np.inf, np.inf, np.inf, np.inf,]), max_nfev=10000)
     df_meta.loc[test_index, 'ne_c'] = func(np.array(df_meta.loc[test_index,['charge', 'rate']]) ,*popt)
     fold_nr+=1
 
-for walk in [2,1,0]:
+for walk in [2,0]:
     if walk == 0:
         ind = np.array(abs(df_meta['velocity'])<velocity_cutoff[1])
     elif walk == 1:
@@ -812,5 +821,12 @@ for walk in [2,1,0]:
         ind = np.ones(df_meta.shape[0], dtype=bool)
 
     for X in ['ne_p', 'ne_c']:
-        fig = mediation_analysis(df_meta.loc[ind,:].reset_index(drop=True), X=X, pupil_measure=pupil_measure, calcium_measure=calcium_measure)
-        fig.savefig(os.path.join(fig_dir, 'mediation_{}_{}.pdf'.format(X, walk)))
+
+        while True:
+            try:
+                fig = mediation_analysis(df_meta.loc[ind,:].reset_index(drop=True), X=X, Y=pupil_measure, M=calcium_measure, 
+                                            bootstrap=True, n_boot=2500, n_jobs=18)
+                fig.savefig(os.path.join(fig_dir, 'mediation_{}_{}.pdf'.format(X, walk)))
+                break
+            except:
+                pass

@@ -8,6 +8,7 @@ import matplotlib
 import matplotlib.pyplot as plt
 import matplotlib.gridspec as gridspec
 import matplotlib.patches as patches
+from matplotlib.colors import LinearSegmentedColormap
 import seaborn as sns
 import h5py
 from joblib import Parallel, delayed
@@ -52,7 +53,7 @@ def linear(x,a,b):
 def linear_3d(M,a1,b1,a2,b2):
     x = M[:,0]
     y = M[:,1]
-    return (a1+b1*x) * (a2+b2*y)
+    return (a1+b1*x) + (a2+b2*y)
 
 def linear_4d(M,a1,b1,a2,b2,a3,b3):
     x = M[:,0]
@@ -69,6 +70,174 @@ def qubic(x,a,b,c,d):
 def gaus(x,a,x0,sigma,b):
     from scipy import asarray as ar,exp
     return a*exp(-(x-x0)**2/(2*sigma**2)) + b*x
+
+def fig_image_quality(ref_img, mean_img, motion, calcium, eye, walk, zoom, subject, session, pulses):
+
+    xmax = min((max(motion['time']), max(walk['time'])))
+
+    fig = plt.figure(figsize=(7,14))
+    gs = gridspec.GridSpec(10, 4)
+    
+    # plt.suptitle('{}, session {}'.format(subject, session), fontsize=16)
+    
+    ax = plt.subplot(gs[0:2,0:2])
+    ax.pcolormesh(np.arange(ref_img.shape[0]), np.arange(ref_img.shape[1]), ref_img, 
+        vmin=np.percentile(ref_img.ravel(), 1), vmax=np.percentile(ref_img.ravel(), 99), 
+        cmap='Greys_r', rasterized=True)
+    ax.set_aspect('equal')
+    ax.set_title('zoom factor = {}'.format(zoom))
+    ax = plt.subplot(gs[0:2,2:4])
+    ax.pcolormesh(np.arange(mean_img.shape[0]), np.arange(mean_img.shape[1]), mean_img, 
+        vmin=np.percentile(mean_img.ravel(), 1), vmax=np.percentile(mean_img.ravel(), 99), 
+        cmap='Greys_r', rasterized=True)
+    ax.set_aspect('equal')
+    ax.set_title('{}% bad frames'.format(round(motion['badframes'].mean()*100,1)))
+    
+    ax = plt.subplot(gs[2, :3])
+    ax.plot(motion['time'], motion['xoff'], lw=0.5, color='k')
+    ax.plot(motion.loc[motion['badframes']!=1,'time'], motion.loc[motion['badframes']!=1,'xoff'], color='g', lw=0.5)
+    for t in np.array(pulses['time']):
+        plt.axvline(t, lw=0.5, color='r')
+    plt.xlim(0, xmax)
+    plt.ylim(ymin=-10)
+    # add_bad_frames(ax, time, badframes)
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('xoff')
+    ax = plt.subplot(gs[2, 3])
+    ax.hist(motion['xoff'], bins=25, orientation="horizontal")
+    ax = plt.subplot(gs[3, :3])
+    ax.plot(motion['time'], motion['yoff'], lw=0.5, color='k')
+    ax.plot(motion.loc[motion['badframes']!=1,'time'], motion.loc[motion['badframes']!=1,'yoff'], color='g', lw=0.5)
+    for t in np.array(pulses['time']):
+        plt.axvline(t, lw=0.5, color='r')
+    plt.xlim(0, xmax)
+    plt.ylim(ymin=-10)
+    # add_bad_frames(ax, time, badframes)
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('yoff')
+    ax = plt.subplot(gs[3, 3])
+    ax.hist(motion['yoff'], bins=25, orientation="horizontal")
+    
+    ax = plt.subplot(gs[4, :3])
+    ax.plot(motion['time'], motion['corrXY'], lw=0.5, color='k')
+    ax.plot(motion.loc[motion['badframes']!=1,'time'], motion.loc[motion['badframes']!=1,'corrXY'], color='g', lw=0.5)
+    for t in np.array(pulses['time']):
+        plt.axvline(t, lw=0.5, color='r')
+    plt.xlim(0, xmax)
+    ax.set_xlabel('Time (s)')
+    ax.set_ylabel('CorrXY')
+    ax = plt.subplot(gs[4, 3])
+    ax.hist(motion['corrXY'], bins=25, orientation="horizontal")
+
+    plt_nr = 5
+
+    for measure, df, title in zip(['F', 'pupil_int_lp_frac', 'eyelid_int_lp_frac', 'velocity', 'distance'], 
+                            [calcium, eye, eye, walk, walk], 
+                            ['Calcium', 'Pupil', 'Eyelid', 'Velocity', 'Distance']):
+
+        ax = plt.subplot(gs[plt_nr, :3])
+        ax.plot(df['time'], df[measure], color='g', lw=0.5)
+        for t in np.array(pulses['time']):
+            plt.axvline(t, lw=0.5, color='r')
+        plt.xlim(0, xmax)
+        ax.set_xlabel('Time (s)')
+        ax.set_ylabel(title)
+        ylim = ax.get_ylim()
+        
+        ax = plt.subplot(gs[plt_nr, 3])
+
+        fs = int(1/df['time'].diff().iloc[1])
+        if measure == 'velocity':
+            epochs = utils.make_epochs(df=df, df_meta=pulses, locking='time', start=-10, dur=60, measure=measure, fs=fs,)
+        elif measure == 'distance':
+            epochs = utils.make_epochs(df=df, df_meta=pulses, locking='time', start=-10, dur=60, measure=measure, fs=fs,
+                                    baseline=True, b_start=-0.5, b_dur=0.1)
+        elif measure == 'F':
+            epochs = utils.make_epochs(df=df, df_meta=pulses, locking='time', start=-10, dur=60, measure=measure, fs=fs,)
+                                    # baseline=True, b_start=-5, b_dur=5)
+        else:
+            epochs = utils.make_epochs(df=df, df_meta=pulses, locking='time2', start=-10, dur=60, measure=measure, fs=fs,)
+                                    # baseline=True, b_start=-5, b_dur=5)
+        x = np.array(epochs.columns)
+
+        for resp in np.array(epochs):
+            plt.plot(x, resp, color='grey', alpha=0.5, lw=0.5)
+            plt.xticks([0,25,50], [0,25,50])
+        plt.plot(x, np.nanmean(np.array(epochs),axis=0), color='black', alpha=1, lw=1.5)
+        plt.axvline(0, color='r', lw=0.5)
+        if not measure == 'distance':
+            ax.set_ylim(ylim)
+
+        plt_nr += 1
+
+    sns.despine(trim=False, offset=3)
+    plt.tight_layout()
+
+    return fig
+
+def hypersurface2(df, z_measure, ylim):
+
+    from mpl_toolkits.mplot3d import Axes3D
+    from matplotlib import cm
+    from sklearn.model_selection import KFold
+
+    # cmap = LinearSegmentedColormap.from_list('custom', ['blue', 'lightblue', 'lightgrey', 'yellow', 'red'], N=1000)
+    if 'pupil' in z_measure:
+        cmap = cm.get_cmap('YlOrRd', 1000)
+    elif 'calcium' in z_measure:
+        cmap = cm.get_cmap("summer_r", 1000)
+    elif ('velocity' in z_measure) or ('walk' in z_measure):
+        cmap = cm.get_cmap("YlGnBu", 1000)
+    else:
+        cmap = cm.get_cmap("BuPu", 1000)
+    
+    # data:
+    means = df.groupby(['amplitude_bin', 'width', 'rate']).mean().reset_index()
+    X = means['rate']
+    Y = means['amplitude']
+    Z = means['width']
+
+    D = means[z_measure]
+    Ds = (D - min(D))
+    Ds = (Ds / max(Ds)) 
+    size = Ds * 100
+    
+    colors = []
+    for d in D:
+        loc = (d-ylim[0]) / (ylim[1]-ylim[0])
+        print(loc)
+        colors.append(cmap(loc))
+
+    # fit:
+    func = log_logistic_4d
+    popt, pcov = curve_fit(func, np.array(df.loc[:,['amplitude', 'width', 'rate']]), np.array(df.loc[:,z_measure]), 
+                            method='trf', bounds=([0,0,0,0,0,0,0],[np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf]))
+    
+    # # fitted surface:
+    # XX, YY = np.meshgrid(np.linspace(0,0.8,25), np.linspace(0,20,25))
+    # ZZ = np.zeros(XX.shape)
+    # for i in range(XX.shape[0]):
+    #     for j in range(YY.shape[1]):
+    #         ZZ[i,j] = func(np.vstack((XX[i,j],YY[i,j])).T, *popt)
+
+    # plot:
+    fig = plt.figure(figsize=(4.5,2))
+    ax = fig.add_subplot(121, projection='3d')
+    cax = ax.scatter(X, Y, Z, s=size, color=colors, marker='o', edgecolors='black', linewidth=0.5)
+    ax.set_xlabel('Rate (Hz)')
+    ax.set_ylabel('Amplitude (mA)')
+    ax.set_zlabel('Width (ms)')
+    ax.invert_zaxis()
+    ax.view_init(elev=-175, azim=-75)
+    ax.set_yticks([0.1, 0.3, 0.5, 0.7, 0.9])
+    ax.set_zticks([0.1, 0.2, 0.4, 0.8])
+    ax.set_xticks([5, 10, 20])
+
+    ax = fig.add_subplot(122)
+    im = ax.imshow(np.arange(100).reshape((10, 10)), cmap=cmap, vmin=ylim[0], vmax=ylim[1])
+    plt.colorbar(im)
+
+    return fig
 
 def hypersurface(df, z_measure):
 
@@ -137,6 +306,8 @@ def plot_param_preprocessing(df, popt=None, popts=None):
 
     X = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width'])
     y = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['amplitude_m'])
+    y_sem = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width'])['amplitude_m'].sem())
+
     widths = np.unique(df['width'])
 
     if popt is None:
@@ -153,8 +324,12 @@ def plot_param_preprocessing(df, popt=None, popts=None):
     gs = gridspec.GridSpec(4,3)
 
     ax = plt.subplot(gs[0,0])
-    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['width'],
-                df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['amplitude_m'])
+    plt.errorbar(x=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['width'],
+                y=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['amplitude_m'],
+                yerr=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin'])['amplitude_m'].sem(),
+                fmt='None', ecolor='black', capsize=2, zorder=2)
+    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['width'],
+                df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['amplitude_m'])
     rect = patches.Rectangle((widths[-2]-0.1, df['amplitude_m_mean'].mean()-0.05), widths[-1]-widths[-2]+0.2, 0.1, linewidth=1,edgecolor='r',facecolor='none')
     ax.add_patch(rect)
     plt.xticks(np.unique(df['width']), np.unique(df['width']))
@@ -177,8 +352,12 @@ def plot_param_preprocessing(df, popt=None, popts=None):
     plt.ylabel('Leak fraction')
 
     ax = plt.subplot(gs[1,0])
-    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['width'],
-                df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['amplitude_m'])
+    plt.errorbar(x=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['width'],
+            y=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['amplitude_m'],
+            yerr=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin'])['amplitude_m'].sem(),
+            fmt='None', ecolor='black', capsize=2, zorder=2)
+    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['width'],
+                df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['amplitude_m'])
     plt.xlim(0, 1)
     plt.xlabel('Pulse width')
     plt.ylabel('Pulse amplitude')
@@ -191,6 +370,7 @@ def plot_param_preprocessing(df, popt=None, popts=None):
     ax = plt.subplot(gs[1,1])
     x = np.linspace(X.min(), X.max(), 50)
     y_fit = func(x, *popt)
+    plt.errorbar(x=X, y=y, yerr=y_sem, fmt='None', ecolor='black', capsize=2, zorder=2)
     ax.plot(X, y, 'o', label='data')
     ax.plot(x, y_fit, label='fit', color='orange')
     plt.xlabel('Pulse width')
@@ -199,12 +379,28 @@ def plot_param_preprocessing(df, popt=None, popts=None):
     plt.xticks(np.unique(df['width']), np.unique(df['width']))
 
     ax = plt.subplot(gs[2,0])
-    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['width'],
-                df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['amplitude_m'],
+    plt.errorbar(x=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['width'],
+                y=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['amplitude_m'],
+                yerr=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin'])['amplitude_m'].sem(),
+                fmt='None', ecolor='black', capsize=2, zorder=2)
+    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['width'],
+                df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['amplitude_m'],
                 alpha=0.5)
-    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['width'],
-                df.groupby(['subj_idx', 'session', 'width', 'amplitude']).mean().groupby(['width', 'amplitude']).mean().reset_index()['amplitude_c'],
+    plt.errorbar(x=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['width'],
+            y=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['amplitude_c'],
+            yerr=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin'])['amplitude_c'].sem(),
+            fmt='None', ecolor='black', capsize=2, zorder=2)
+    ax.scatter(df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['width'],
+                df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['amplitude_c'],
                 alpha=0.5, color='lightgreen')
+    
+    plt.axhline(0.1, color='black', lw=0.5)
+    plt.axhline(0.3, color='black', lw=0.5)
+    plt.axhline(0.5, color='black', lw=0.5)
+    plt.axhline(0.7, color='black', lw=0.5)
+    plt.axhline(0.9, color='black', lw=0.5)
+    
+    
     rect = patches.Rectangle((widths[0]-0.1, df.loc[df['amplitude_m_bin']==max(df['amplitude_m_bin']), 'amplitude_c'].mean()-0.05), widths[-1]-widths[0]+0.2, 0.1, linewidth=1,edgecolor='r',facecolor='none')
     ax.add_patch(rect)
     plt.xlim(0, 1)
@@ -290,10 +486,24 @@ def plot_timecourses(df_meta, epochs, timewindows, ylabel='Pupil response', ylim
         #     s[i,:] = utils._butter_lowpass_filter(s[i,:], highcut=0.5, fs=fs, order=3)
         
         ax = fig.add_subplot(1,5,plot_nr)
-        colors = sns.color_palette("YlOrRd", m.shape[0])
+        # colors = sns.color_palette("YlOrRd", m.shape[0])
         
+        if 'pupil' in ylabel:
+            colors = sns.color_palette("YlOrRd", m.shape[0])
+        elif 'calcium' in ylabel:
+            # cmap = LinearSegmentedColormap.from_list('custom', ['yellow', 'green'], N=100)
+            # colors = [cmap(1/(i+1)) for i in range(m.shape[0])][::-1]
+            colors = sns.color_palette("summer_r", m.shape[0])
+        elif ('velocity' in ylabel) or ('walk' in ylabel):
+            colors = sns.color_palette("YlGnBu", m.shape[0])
+        else:
+            colors = sns.color_palette("BuPu", m.shape[0])
+
+        ax.axvspan(0, 10, color='grey', alpha=0.2, lw=0)
         for span in timewindows[ylabel]:
-            ax.axvspan(span[0], span[1], color='k', alpha=0.1)
+            plt.plot((span[0],span[1]),(ylim[0],ylim[0]),color='black',lw=2)
+            
+            # ax.axvspan(span[0], span[1], color='r', alpha=0.1)
 
         if 'charge' in param:
             sorting = np.argsort(df_meta.groupby(bin_by).mean()['charge_ps'].reset_index()['charge_ps'])
@@ -380,12 +590,12 @@ def plot_scalars(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p
     else:
         func = log_logistic_4d
         popt, pcov = curve_fit(func, x, y,
-                        method='trf', bounds=([0, 0, 0, 0, 0, 0, 0], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf]), max_nfev=10000)
+                        method='trf', bounds=([0, 0, 0, 0, 0, 0, 0], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf]), max_nfev=50000)
     
     # fitted surface:
-    x1 = np.arange(0,0.9025,0.025) 
-    x2 = np.arange(0,0.8025,0.025)
-    x3 = np.arange(0,21,1)
+    x1 = np.round(np.arange(0,0.9025,0.025),3)
+    x2 = np.round(np.arange(0,0.8025,0.025),3)
+    x3 = np.round(np.arange(0,21,1),3)
     XX1, XX2, XX3 = np.meshgrid(x1, x2, x3)
     df_surf = pd.DataFrame({'amplitude': XX1.ravel(),
                             'width': XX2.ravel(),
@@ -397,104 +607,77 @@ def plot_scalars(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p
     r2 = (sp.stats.pearsonr(df_meta[measure], predictions)[0]**2) * 100
 
     # plot:
-    fig = plt.figure(figsize=(8,2))
+    fig = plt.figure(figsize=(6,2))
     plot_nr = 1
-    bar_split = ['charge_bin', 'rate']
-    for bin_by, x_measure, param in zip(['amplitude_bin', 'width_bin', 'rate_bin', bar_split,], 
-                                        ['amplitude', 'width', 'rate', 'charge',], 
-                                        ['amplitude', 'width', 'rate', 'charge',]):
-        means = df_meta.groupby(bin_by)[[measure, x_measure]].mean().reset_index()
-        sems = df_meta.groupby(bin_by)[[measure, x_measure]].sem().reset_index()
+    for bin_by, x_measure, param in zip(['amplitude_bin', 'width', 'rate'], 
+                                        ['amplitude', 'width', 'rate'], 
+                                        ['amplitude', 'width', 'rate']):
+        try:
+            means = df_meta.groupby(bin_by)[[measure, x_measure]].mean().reset_index()
+            sems = df_meta.groupby(bin_by)[[measure, x_measure]].sem().reset_index()
+        except:
+            means = df_meta.groupby(bin_by)[[measure]].mean().reset_index()
+            sems = df_meta.groupby(bin_by)[[measure]].sem().reset_index()
         sems[measure] = sems[measure]*1.96    
-        colors = sns.color_palette("YlOrRd", means.shape[0])
-        ax = fig.add_subplot(1,4,plot_nr)
-
-        if 'charge' in x_measure:
-            p_values = []
-            for df, d in df_meta.groupby(bin_by):
-                if p0:
-
-                    if len(bin_by) == 2:
-                        bb = bin_by[0]
-                    else:
-                        bb = bin_by
-                    print(bb)
-                    baseline = df_meta.loc[df_meta[bb]==min(df_meta[bb]), measure]
-                    t,p = sp.stats.ttest_ind(d[measure], baseline)
-                else:
-                    t,p = sp.stats.ttest_1samp(d[measure], 0)
-                p_values.append(p)
-            if p0:
-                p_values = np.concatenate((np.array([1]), sm.stats.multitest.multipletests(np.array(p_values)[1:], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)[1]))
-            else:
-                p_values = sm.stats.multitest.multipletests(np.array(p_values), alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)[1]
-            print(p_values)
-            with matplotlib.rc_context({"lines.linewidth": 0.5}):
-                sns.barplot(x='charge_bin', y=measure, hue='rate', ci=95, palette='YlOrRd', data=df_meta)
-                nr_rates = len(df_meta['rate_bin'].unique())
-            width = 0.8/nr_rates 
-            locs = np.cumsum(np.repeat(width,nr_rates))-np.cumsum(np.repeat(width,nr_rates)).mean()               
-            for i in range(p_values.shape[0]):
-                if p_values[i] < 0.001:
-                    sig = '***'
-                elif p_values[i] < 0.01:
-                    sig = '**'
-                elif p_values[i] < 0.05:
-                    sig = '*'
-                else:
-                    sig = 'n.s.'
-                ax.text(x=int(i/nr_rates)+locs[(i%nr_rates)]+width/4, y=0.75*ylim[1], s=sig, size=6, horizontalalignment='center', verticalalignment='center', rotation=90)
-            try:
-                ax.get_legend().remove()
-            except:
-                pass
         
+        
+        if 'pupil' in measure:
+            colors = sns.color_palette("YlOrRd", means.shape[0])
+        elif 'calcium' in measure:
+            colors = sns.color_palette("summer_r", means.shape[0])
+        elif ('velocity' in measure) or ('walk' in measure):
+            colors = sns.color_palette("YlGnBu", means.shape[0])
         else:
+            colors = sns.color_palette("BuPu", means.shape[0])
 
-            # data:
-            x = np.array(means[x_measure])
-            y = np.array(means[measure])
-            for i in range(len(x)):
-                plt.plot(x[i],y[i], 'o', mfc='lightgrey', color=colors[i], zorder=1)
-            ax.errorbar(x=x, y=y, yerr=sems[measure], fmt='none', elinewidth=0.5, markeredgewidth=0.5, ecolor='k', capsize=2, zorder=2)
-            
-            # fit: 
-            d = df_surf.groupby(x_measure).mean().reset_index()
-            ax.plot(d[x_measure], d['ne'], color='k', ls='-', zorder=10)
+        ax = fig.add_subplot(1,3,plot_nr)
+        
+        # data:
+        x = np.array(means[x_measure])
+        y = np.array(means[measure])
+        for i in range(len(x)):
+            plt.plot(x[i],y[i], 'o', mfc='lightgrey', color=colors[i], zorder=1)
+        ax.errorbar(x=x, y=y, yerr=sems[measure], fmt='none', elinewidth=0.5, markeredgewidth=0.5, ecolor='k', capsize=2, zorder=2)
+        
+        # fit: 
+        d = df_surf.groupby(x_measure).mean().reset_index()
+        ax.plot(d[x_measure], d['ne'], color='k', ls='-', zorder=10)
 
-            # add stats:
-            x = np.array(means[x_measure])
-            p_values = []
-            for df, d in df_meta.groupby(bin_by):
-                if p0:
-
-                    if len(bin_by) == 1:
-                        bb = bin_by[0]
-                    else:
-                        bb = bin_by
-                    baseline = df_meta.loc[df_meta[bb]==min(df_meta[bb]), measure]
-                    t,p = sp.stats.ttest_ind(d[measure], baseline)
-                else:
-                    t,p = sp.stats.ttest_1samp(d[measure], 0)
-                p_values.append(p)
+        # add stats:
+        x = np.array(means[x_measure])
+        p_values = []
+        for df, d in df_meta.groupby(bin_by):
             if p0:
-                p_values = np.concatenate((np.array([1]), sm.stats.multitest.multipletests(np.array(p_values)[1:], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)[1]))
-            else:
-                p_values = sm.stats.multitest.multipletests(np.array(p_values), alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)[1]
-            print(min(p_values.ravel()))
-            for i in range(len(p_values)):
-                if p_values[i] < 0.001:
-                    sig = '***'
-                elif p_values[i] < 0.01:
-                    sig = '**'
-                elif p_values[i] < 0.05:
-                    sig = '*'
+                if len(bin_by) == 1:
+                    bb = bin_by[0]
                 else:
-                    sig = 'n.s.'
-                ax.text(x=x[i], y=0.75*ylim[1], s=sig, size=6, horizontalalignment='center', verticalalignment='center')
+                    bb = bin_by
+                baseline = df_meta.loc[df_meta[bb]==min(df_meta[bb]), measure]
+                t,p = sp.stats.ttest_ind(d[measure], baseline)
+            else:
+                t,p = sp.stats.ttest_1samp(d[measure], 0)
+            p_values.append(p)
+        if p0:
+            p_values = np.concatenate((np.array([1]), sm.stats.multitest.multipletests(np.array(p_values)[1:], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)[1]))
+        else:
+            p_values = sm.stats.multitest.multipletests(np.array(p_values), alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)[1]
+        print(min(p_values.ravel()))
+        for i in range(len(p_values)):
+            if p_values[i] < 0.001:
+                sig = '***'
+            elif p_values[i] < 0.01:
+                sig = '**'
+            elif p_values[i] < 0.05:
+                sig = '*'
+            else:
+                sig = 'n.s.'
+            ax.text(x=x[i], y=0.75*ylim[1], s=sig, size=6, horizontalalignment='center', verticalalignment='center')
         
         if isinstance(bin_by, str):
-            plt.xticks(ticks=np.round(np.sort(df_meta[x_measure].unique()),1), labels=np.round(np.sort(df_meta[x_measure].unique()),1))
+            if x_measure == 'amplitude':
+                plt.xticks(ticks=[0.1,0.3,0.5,0.7,0.9], labels=[0.1,0.3,0.5,0.7,0.9])
+            else:
+                plt.xticks(ticks=np.round(np.sort(df_meta[x_measure].unique()),1), labels=np.round(np.sort(df_meta[x_measure].unique()),1))
         plt.ylim(ylim)
         if x_measure == 'charge':
             plt.title('{}'.format(measure))
@@ -508,7 +691,7 @@ def plot_scalars(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p
     
     return fig
 
-def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None)):
+def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p0=False):
 
     # fit function:
     x = np.array(df_meta.loc[:,['amplitude', 'width', 'rate']])
@@ -519,37 +702,72 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None)):
     else:
         func = log_logistic_4d
         popt, pcov = curve_fit(func, x, y,
-                        method='trf', bounds=([0, 0, 0, 0, 0, 0, 0], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf]), max_nfev=10000)
+                        method='trf', bounds=([0, 0, 0, 0, 0, 0, 0], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf]), max_nfev=50000)
 
     # fitted surface:
-    x1 = np.arange(0,0.9025,0.025) 
-    x2 = np.arange(0,0.8025,0.025)
-    x3 = np.arange(0,21,1)
+    x1 = np.round(np.arange(0,0.9025,0.025),3)
+    x2 = np.round(np.arange(0,0.8025,0.025),3)
+    x3 = np.round(np.arange(0,21,1),3)
     XX1, XX2, XX3 = np.meshgrid(x1, x2, x3)
     df_surf = pd.DataFrame({'amplitude': XX1.ravel(),
                             'width': XX2.ravel(),
                             'rate': XX3.ravel()})
     df_surf['ne'] = func(np.array(df_surf[['amplitude', 'width', 'rate']]), *popt)
-    
+
     # variance explained:
     predictions = func(x, *popt) 
     r2 = (sp.stats.pearsonr(df_meta[measure], predictions)[0]**2) * 100
 
+    # fit function:
+    x = np.array(df_meta.loc[:,['charge', 'rate']])
+    y = np.array(df_meta.loc[:,[measure]]).ravel()
+    if 'corrXY' in measure:
+        func2 = linear_3d
+        popt2, pcov2 = curve_fit(func2, x, y)
+    else:
+        func2 = log_logistic_3d
+        popt2, pcov2 = curve_fit(func2, x, y,
+                        method='trf', bounds=([0, 0, 0, 0, 0,], [np.inf, np.inf, np.inf, np.inf, np.inf,]), max_nfev=50000)
+
+    # fitted surface:
+    x1 = np.round(np.arange(0.01,0.725,0.005),3)
+    x2 = np.round(np.arange(0,21,1),3)
+    XX1, XX2 = np.meshgrid(x1, x2)
+    df_surf2 = pd.DataFrame({'charge': XX1.ravel(),
+                            'rate': XX2.ravel()})
+    df_surf2['ne'] = func2(np.array(df_surf2[['charge', 'rate']]), *popt2)
+    df_surf2 = df_surf2.loc[df_surf2['charge']>0,:]
+
+    # variance explained:
+    predictions2 = func2(x, *popt2) 
+    r22 = (sp.stats.pearsonr(df_meta[measure], predictions2)[0]**2) * 100
+
     # plot:
     fig = plt.figure(figsize=(6,4))
     plot_nr = 1
-    for bin_by, x_measure, param in zip([['amplitude', 'width'], ['width', 'rate'], ['rate', 'amplitude'], ['amplitude', 'rate'], ['width', 'amplitude'], ['rate', 'width']], 
-                                        ['amplitude', 'width', 'rate', 'amplitude', 'width', 'rate',], 
-                                        ['amplitude', 'width', 'rate','amplitude', 'width', 'rate',]):
+    for bin_by, x_measure in zip([['amplitude_bin', 'rate'], ['width', 'rate'], ['charge_bin', 'rate'], 
+                                        ['amplitude_bin', 'width'], ['amplitude_bin', 'rate'], ['width', 'rate'],], 
+                                        ['amplitude', 'width', 'charge', 'amplitude', 'amplitude', 'width'],):
         
-        means = df_meta.groupby(bin_by)[[measure]].mean().reset_index()
-        sems = df_meta.groupby(bin_by)[[measure]].sem().reset_index()
-        sems[measure] = sems[measure]*1.96
+        means = df_meta.groupby(bin_by)[[measure, 'amplitude', 'charge']].mean().reset_index()
+        sems = df_meta.groupby(bin_by)[[measure, 'amplitude', 'charge']].sem().reset_index()
+        sems.loc[:,measure] = sems.loc[:,measure]*1.96
 
         ax = fig.add_subplot(2,3,plot_nr)
-        cut = bin_by[1].split('_')[0]
-        colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
+        # colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
+        if 'pupil' in measure:
+            colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
+        elif 'calcium' in measure:
+            colors = sns.color_palette("summer_r", len(means[bin_by[1]].unique()))
+        elif ('velocity' in measure) or ('walk' in measure):
+            colors = sns.color_palette("YlGnBu", len(means[bin_by[1]].unique()))
+        else:
+            colors = sns.color_palette("BuPu", len(means[bin_by[1]].unique()))
 
+        offset = -0.1
+
+        print(means)
+        print(sems)
         for i, m2 in enumerate(means[bin_by[1]].unique()):
             
             # data:
@@ -561,17 +779,60 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None)):
                             fmt='none', ecolor='darkgrey', capsize=2, zorder=2)
 
             # fit: 
-            d = df_surf.loc[df_surf[cut]==m2,].groupby(x_measure).mean().reset_index()
-            ax.plot(d[x_measure], d['ne'], color=colors[i], ls='-', zorder=10)
+            if x_measure == 'charge':
+                d = df_surf2.loc[df_surf2[bin_by[1]]==m2,].groupby(x_measure).mean().reset_index()
+                ax.plot(d[x_measure], d['ne'], color=colors[i], ls='-', zorder=10)
+
+                # add stats:
+                p_values = []
+                for df, d in df_meta.loc[df_meta['rate']==m2,:].groupby(bin_by):
+                    if p0:
+                        if len(bin_by) == 2:
+                            bb = bin_by[0]
+                        else:
+                            bb = bin_by
+                        print(bb)
+                        baseline = df_meta.loc[df_meta[bb]==min(df_meta[bb]), measure]
+                        t,p = sp.stats.ttest_ind(d[measure], baseline)
+                    else:
+                        t,p = sp.stats.ttest_1samp(d[measure], 0)
+                    p_values.append(p)
+                if p0:
+                    p_values = np.concatenate((np.array([1]), sm.stats.multitest.multipletests(np.array(p_values)[1:], alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)[1]))
+                else:
+                    p_values = sm.stats.multitest.multipletests(np.array(p_values), alpha=0.05, method='fdr_bh', is_sorted=False, returnsorted=False)[1]
+                for ip in range(p_values.shape[0]):
+                    size = 8
+                    if p_values[ip] < 0.001:
+                        sig = '***'
+                    elif p_values[ip] < 0.01:
+                        sig = '**'
+                    elif p_values[ip] < 0.05:
+                        sig = '*'
+                    if p_values[ip] < 0.05:
+                        ax.text(x=x[ip], y=((ylim[1]-ylim[0])*0.9)+ylim[0], s=sig, size=size, color=colors[i], horizontalalignment='center', verticalalignment='center', rotation=90)
+                offset+=0.1
+            else:
+                d = df_surf.loc[df_surf[bin_by[1]]==m2,].groupby(x_measure).mean().reset_index()
+                ax.plot(d[x_measure], d['ne'], color=colors[i], ls='-', zorder=10)
 
         plt.ylim(ylim)
-        plt.title('{}\nr2 = {}%'.format(param, round(r2,2)))
         plt.xlabel(x_measure)
         plt.ylabel(ylabel)
-        plt.xticks(ticks=np.round(np.sort(df_meta[x_measure].unique()),1), labels=np.round(np.sort(df_meta[x_measure].unique()),1))
+        if x_measure == 'charge':
+            plt.title('{}\nr2 = {}%'.format(x_measure, round(r22,2)))
+            ax.set_xscale('log')
+        elif x_measure == 'amplitude':
+            plt.title('{}\nr2 = {}%'.format(x_measure, round(r2,2)))
+            plt.xticks(ticks=[0.1,0.3,0.5,0.7,0.9], labels=[0.1,0.3,0.5,0.7,0.9])
+        else:
+            plt.title('{}\nr2 = {}%'.format(x_measure, round(r2,2)))
+            plt.xticks(ticks=np.round(np.sort(df_meta[x_measure].unique()),1), labels=np.round(np.sort(df_meta[x_measure].unique()),1))
+        
         plot_nr += 1
     sns.despine(trim=False, offset=3)
     plt.tight_layout()
+
     return fig
 
 def plot_scalars3(df_meta, measure, ylabel='Pupil response', ylim=(None, None)):
@@ -790,8 +1051,8 @@ def plot_pupil_responses(df_meta, epochs, bins, ylabel='Pupil response', ylim=(-
 
     x = np.round(np.array(epochs.columns, dtype=float), 2)
 
-    epochs_r = epochs.loc[:,(x>=-60)&(x<-20)]
-    epochs_v = epochs.loc[:,(x>=-20)&(x<20)]
+    epochs_r = epochs.loc[:,(x>=-50)&(x<-20)]
+    epochs_v = epochs.loc[:,(x>=-10)&(x<20)]
 
     if isinstance(bins, int):
         bins_r = pd.qcut(epochs_r.loc[:,(epochs_r.columns>=-45)&(epochs_r.columns<-40)].mean(axis=1), q=bins, labels=False)
@@ -799,26 +1060,10 @@ def plot_pupil_responses(df_meta, epochs, bins, ylabel='Pupil response', ylim=(-
     else:
         bins_r = pd.cut(epochs_r.loc[:,(epochs_r.columns>=-45)&(epochs_r.columns<-40)].mean(axis=1), bins=bins, labels=False)
         bins_v = pd.cut(epochs_v.loc[:,(epochs_v.columns>=-5)&(epochs_v.columns<-0)].mean(axis=1), bins=bins, labels=False)
-    
-    # shell()
 
-    fig = plt.figure(figsize=(6,2))
+    fig = plt.figure(figsize=(5,2))
 
     ax = fig.add_subplot(131)
-    means = np.array(epochs.mean(axis=0))
-    sems = np.array(epochs.sem(axis=0))
-    plt.fill_between(np.array(epochs.columns) , means-sems, means+sems, color=sns.color_palette("YlOrRd", 5)[2], alpha=0.2)
-    plt.plot(np.array(epochs.columns) , means, lw=1, color=sns.color_palette("YlOrRd", 5)[2]) #, label='bin {}'.format(i+1))
-    plt.axvline(0, lw=0.5, color='k')
-    plt.axvspan(-27.5, -22.5, color='k', alpha=0.1)
-    plt.axvspan(-20, -15, color='k', alpha=0.1)
-    plt.axvspan(-12.5, -7.5, color='k', alpha=0.1)
-    plt.axvspan(-5, 0, color='k', alpha=0.1)
-    plt.axvspan(2.5, 7.5, color='k', alpha=0.1)
-    plt.xlabel('Time from pulse (s)')
-    plt.ylabel('Pupil size')
-
-    ax = fig.add_subplot(132)
     means = epochs_r.groupby(bins_r).mean()
     sems = epochs_r.groupby(bins_r).sem()
     for i in range(means.shape[0]):
@@ -827,12 +1072,13 @@ def plot_pupil_responses(df_meta, epochs, bins, ylabel='Pupil response', ylim=(-
     plt.ylim(0,1)
     plt.axvline(0, lw=0.5, color='k')
     plt.axhline(0, lw=0.5, color='k')
+    plt.axvspan(0, 10, color='r', alpha=0.1)
     plt.axvspan(-5, 0, color='k', alpha=0.1)
     plt.axvspan(2.5, 7.5, color='k', alpha=0.1)
     plt.xlabel('Time from pulse (s)')
     plt.ylabel('Pupil size')
 
-    ax = fig.add_subplot(133)
+    ax = fig.add_subplot(132)
     means = epochs_r.groupby(bins_r).mean()
     sems = epochs_r.groupby(bins_r).sem()
     for i in range(means.shape[0]):
@@ -847,6 +1093,24 @@ def plot_pupil_responses(df_meta, epochs, bins, ylabel='Pupil response', ylim=(-
     plt.ylim(0,1)
     plt.axvline(0, lw=0.5, color='k')
     plt.axhline(0, lw=0.5, color='k')
+    plt.axvspan(0, 10, color='r', alpha=0.1)
+    plt.axvspan(-5, 0, color='k', alpha=0.1)
+    plt.axvspan(2.5, 7.5, color='k', alpha=0.1)
+    plt.xlabel('Time from pulse (s)')
+    plt.ylabel('Pupil size')
+
+    ax = fig.add_subplot(133)
+    means = epochs_v.groupby(bins_v).mean()
+    means.loc[:,:] = means.loc[:,:] - epochs_r.groupby(bins_r).mean().values + np.array(np.repeat(means.loc[:,(means.columns>=-5)&(means.columns<=0)].mean(axis=1), means.shape[1])).reshape((means.shape[0],means.shape[1]))
+    sems = epochs_v.groupby(bins_v).sem()
+    colors = sns.color_palette("YlOrRd", means.shape[0])
+    for i in range(means.shape[0]):
+        plt.fill_between(np.array(epochs_v.columns), means.iloc[i]-sems.iloc[i], means.iloc[i]+sems.iloc[i], color=colors[i], alpha=0.2)
+        plt.plot(np.array(epochs_v.columns), means.iloc[i], lw=1, color=colors[i]) #, label='bin {}'.format(i+1))
+    plt.ylim(0,1)
+    plt.axvline(0, lw=0.5, color='k')
+    plt.axhline(0, lw=0.5, color='k')
+    plt.axvspan(0, 10, color='r', alpha=0.1)
     plt.axvspan(-5, 0, color='k', alpha=0.1)
     plt.axvspan(2.5, 7.5, color='k', alpha=0.1)
     plt.xlabel('Time from pulse (s)')
@@ -893,15 +1157,23 @@ def plot_reversion_to_mean_correction(df, measure, bin_measure, func):
     x = np.array(means['{}_b'.format(bin_measure)])
     y = np.array(means['{}_change'.format(measure)])
     x_pred = np.linspace(min(x), max(x), 100)
-    plt.scatter(df['{}_b'.format(bin_measure)], df['{}_change'.format(measure)], s=3, color='grey', alpha=0.2, rasterized=True)
+    
+    try:
+        sns.kdeplot(x, y, shade=True)
+    except:
+        pass
+    
+    # ylim = ax.get_ylim()
+    # plt.scatter(df['{}_b'.format(bin_measure)], df['{}_change'.format(measure)], s=3, color='grey', alpha=0.2, rasterized=True)
+    # ax.set_ylim(ylim)
     plt.errorbar(x, y, yerr=sems['{}_change'.format(measure)], color='k', elinewidth=0.5, mfc='lightgrey', fmt='o', ecolor='lightgray', capsize=0)
     popt, pcov = curve_fit(func, df.loc[~np.isnan(df['{}_b'.format(bin_measure)]),'{}_b'.format(bin_measure)], df.loc[~np.isnan(df['{}_b'.format(bin_measure)]),'{}_change'.format(measure)],)
     # popt2, pcov = curve_fit(func, df['{}_b'.format(measure)], df['{}_change'.format(measure)], sigma=1/df['bins_{}_count'.format(measure)])
     # popt3, pcov = curve_fit(func, df.groupby('bins_{}'.format(measure))['{}_b'.format(measure)].mean(), df.groupby('bins_{}'.format(measure))['{}_change'.format(measure)].mean(), sigma=df.groupby('bins_{}'.format(measure)).count()[measure])
     plt.plot(x_pred, func(x_pred, *popt), color='red', alpha=0.75, ls='-', zorder=10)
     # plt.ylim(np.percentile(df['{}_change'.format(measure)],lp), np.percentile(df['{}_change'.format(measure)],hp))
-    plt.ylim(np.percentile(df.loc[~np.isnan(df['{}_change'.format(measure)]),'{}_change'.format(measure)],lp),
-        np.percentile(df.loc[~np.isnan(df['{}_change'.format(measure)]),'{}_change'.format(measure)],hp))
+    # plt.ylim(np.percentile(df.loc[~np.isnan(df['{}_change'.format(measure)]),'{}_change'.format(measure)],lp),
+    #     np.percentile(df.loc[~np.isnan(df['{}_change'.format(measure)]),'{}_change'.format(measure)],hp))
     
     plt.xlabel('Measure (t)')
     plt.ylabel('Measure (t+1)')
@@ -992,7 +1264,7 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
         # df['pupil_change'] = df['pupil']
 
         # bins:
-        bins = np.array([-10,0.2,0.3,0.4,0.5,0.6,0.7,0.8,10])
+        bins = np.array([-100,20,30,40,50,60,70,80,1000])
         df_meta['bins_{}'.format(m)] = pd.cut(df_meta['{}_0'.format(m)], bins=bins, labels=False)
         df['bins_{}'.format(m)] = pd.cut(df['{}_b'.format(m)], bins=bins, labels=False)
 
@@ -1226,6 +1498,12 @@ def process_meta_data(file_meta, stim_overview, cuff_type, subj, session, fig_di
         df_meta['amplitude_m_rank'] = df_meta['amplitude_m'].rank(method='first') # takes care of repeating values...
         df_meta['amplitude_m_bin'] = df_meta.groupby(['width', 'rate'])['amplitude_m_rank'].apply(pd.qcut, q=5, labels=False,)
         
+        # add impedance:
+        impedance = stim_overview_ses['impedance'].iloc[0]
+        if impedance == '>10':
+            impedance = 15
+        df_meta['impedance'] = float(impedance)
+
         # step 1 -- determine leak fraction:
         widths = np.unique(df_meta['width'])
         ind = (df_meta['width']==widths[-2])|(df_meta['width']==widths[-1])
@@ -1242,7 +1520,7 @@ def process_meta_data(file_meta, stim_overview, cuff_type, subj, session, fig_di
             popt, pcov = curve_fit(fsigmoid, X, y, method='dogbox', bounds=([2, -0.75, y.max()/2],[20, 0.75, y.max()*2]))
             fit_success = True
         except:
-            popt = np.array([10000,0,y.mean()])
+            popt = np.array([50000,0,y.mean()])
             fit_success = False
 
         # print(fit_success)
@@ -1284,12 +1562,32 @@ def process_meta_data(file_meta, stim_overview, cuff_type, subj, session, fig_di
 
     # add charge:
     df_meta['amplitude_bin'] = df_meta['amplitude_m_bin'].copy()
-    df_meta['amplitude'] = ((df_meta['amplitude_bin']+1)*0.2)-0.1
+
+    if (df_meta['amplitude_i_min'].iloc[0] == 0.1)&(df_meta['amplitude_i_max'].iloc[0] == 0.8):
+        amps = [0.1,0.2,0.4,0.6,0.8]
+    elif (df_meta['amplitude_i_min'].iloc[0] == 0.1)&(df_meta['amplitude_i_max'].iloc[0] == 0.9):
+        amps = [0.1,0.3,0.5,0.7,0.9]
+    elif (df_meta['amplitude_i_min'].iloc[0] == 0.2)&(df_meta['amplitude_i_max'].iloc[0] == 0.7):
+        amps = [0.2,0.4,0.5,0.6,0.7]
+    elif (df_meta['amplitude_i_min'].iloc[0] == 0.2)&(df_meta['amplitude_i_max'].iloc[0] == 0.8):
+        amps = [0.2,0.4,0.5,0.6,0.8]
+    elif (df_meta['amplitude_i_min'].iloc[0] == 0.4)&(df_meta['amplitude_i_max'].iloc[0] == 0.8):
+        amps = [0.4,0.5,0.6,0.7,0.8]
+    elif (df_meta['amplitude_i_min'].iloc[0] == 0.6)&(df_meta['amplitude_i_max'].iloc[0] == 1.4):
+        amps = [0.6,0.8,1.0,1.2,1.4]
+    else:
+        print()
+        print((subj, session))
+        raise
+    
+    df_meta['amplitude'] = np.zeros(df_meta.shape[0])
+    for b, amp in zip(sorted(df_meta['amplitude_bin'].unique()), amps):
+        df_meta.loc[df_meta['amplitude_bin']==b, 'amplitude'] = amp
     df_meta['width'] = (2**(df_meta['width_bin']+1))/20 
     df_meta['charge'] = df_meta['amplitude']*df_meta['width']
     df_meta['charge_ps'] = df_meta['amplitude']*df_meta['width']*df_meta['rate']
+    # df_meta['charge_ps_bin'] = df_meta.groupby(['subj_idx', 'session'])['charge_ps'].apply(pd.qcut, q=5, labels=False)
     df_meta['charge_bin'] = df_meta.groupby(['subj_idx', 'session'])['charge'].apply(pd.qcut, q=5, labels=False)
-    df_meta['charge_ps_bin'] = df_meta.groupby(['subj_idx', 'session'])['charge_ps'].apply(pd.qcut, q=5, labels=False)
 
     # plot
     fig = plot_param_preprocessing(df_meta, popt, popts)
@@ -1436,8 +1734,6 @@ def process_eye_data(file_meta, file_tdms, file_pupil, subj, ses, fig_dir, use_d
     fig = preprocess_pupil.plot_preprocessing(df_eye)
     fig.savefig(os.path.join(fig_dir, 'preprocess', 'pupil_data_{}_{}.png'.format(subj, ses)))
 
-    # shell()
-
     # measure = 'pupil'
     # ts = (np.array(df_eye[measure]) - np.median(df_eye[measure])) / np.std(df_eye[measure]) # z-score
     # ts = np.concatenate(( np.array([0]), np.diff(ts) )) / (1/fs)  # z-score / s
@@ -1560,6 +1856,8 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
     df_meta = process_meta_data(file_meta, stim_overview, cuff_type, subj, ses, fig_dir)
     if df_meta.shape[0] == 0:
         return [pd.DataFrame([]) for _ in range(7)]
+    f = file_tdms.split('/')[-1]
+    df_meta['date'] = '{}-{}-{}'.format(f.split('_')[2], f.split('_')[3], f.split('_')[4])
 
     ### GET WALKING DATA ###
     df_walk = process_walk_data(file_tdms, fs_resample=fs_resample)
@@ -1668,18 +1966,6 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
 
     ### GET EYE DATA ###
     df_eye = process_eye_data(file_frames, file_tdms, file_pupil, subj, ses, fig_dir, use_dlc_blinks=False, fs_resample=fs_resample)
-    # if df_eye.shape[0] == 0:
-    #     print()
-    #     print(subj, ses)
-    #     print("THIS IS REALLY BAD!! == WE'RE LOOSING A SESSION DUE TO EYE DATA....!")
-    #     print()
-    #     return [pd.DataFrame([]) for _ in range(6)]
-
-    # fig = plt.figure()   
-    # ax = fig.add_subplot(211)
-    # plt.plot(df_eye.time, df_eye.eyelid)  
-    # ax = fig.add_subplot(212)
-    # plt.plot(df_walk.time, df_walk.velocity)  
 
     ### get zoom factor:
     zoom = utils.get_image_zoom_factor(file_tiff)
@@ -1713,7 +1999,7 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
 
     # make epochs:
     fs = 50
-    df_meta['time2'] = df_meta['time']-5
+    df_meta['time2'] = df_meta['time']-2
     epochs_x = utils.make_epochs(df=df_motion, df_meta=df_meta, locking='time', start=-60, dur=120, measure='xoff', fs=fs,)
     epochs_y = utils.make_epochs(df=df_motion, df_meta=df_meta, locking='time', start=-60, dur=120, measure='yoff', fs=fs,)
     epochs_corr = utils.make_epochs(df=df_motion, df_meta=df_meta, locking='time', start=-60, dur=120, measure='corrXY', fs=fs,)
@@ -1739,30 +2025,17 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     fluorescence = fluorescence.drop(labels=['index'], axis=1)
     
     # preprocess:
+    fluorescence['F'].iloc[0:10*fs] = fluorescence['F'].median()
     fluorescence['F0'] = utils._butter_lowpass_filter(fluorescence['F'], highcut=3, fs=fs, order=3)
 
-
     if (subj=='C1772')&(ses=='7'):
-        split = np.array([-1, 1900, 10000])
+        split = np.array([-1, 1900, 50000])
     elif (subj=='C1773')&(ses=='8'):
-        split = np.array([-1, 1700, 10000])
+        split = np.array([-1, 1700, 50000])
     elif (subj=='C1773')&(ses=='10'):
-        split = np.array([-1, 1200, 10000])
+        split = np.array([-1, 1200, 50000])
     else:
-        split = np.array([-1, 10000])
-
-
-    #FIXME: remove iterative aspect -- interpolate between baselines -- low pass filter
-    # # mask pulse:
-    # fluorescence['Fm'] = fluorescence['F'].copy() 
-    # for t in df_meta['time']:
-    #     ind = (fluorescence['time']>(t))&(fluorescence['time']<(t+60))
-    #     fluorescence.loc[ind, 'Fm'] = np.NaN
-    # fluorescence['Fm'] = fluorescence['Fm'].interpolate('linear')
-    # fluorescence['Fmf'] = utils._butter_lowpass_filter(fluorescence['Fm'], highcut=0.01, fs=fs, order=3)
-    # plt.plot(fluorescence['F'])
-    # plt.plot(fluorescence['Fm'])
-    # plt.plot(fluorescence['Fmf'])
+        split = np.array([-1, 50000])
 
     step = 0
 
@@ -1775,7 +2048,6 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
 
     for i in range(len(split)-1):
         
-
         ind = (fluorescence['time']>=split[i])&(fluorescence['time']<split[i+1])
         ind2 = (times>=split[i])&(times<split[i+1])
 
@@ -1813,8 +2085,14 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
                             (np.percentile(fluorescence['F'], 99.9) - np.percentile(fluorescence['F'], 0.01)))
 
     # summary figure: 
-    fig = preprocess_calcium.fig_image_quality(ops['refImg'], ops['meanImg'], df_motion.iloc[::10], fluorescence.iloc[::10], df_eye.iloc[::10], df_walk.iloc[::10], zoom, subj, ses, df_meta)
+    fig = fig_image_quality(ops['refImg'], ops['meanImg'], df_motion.iloc[::10].reset_index(), 
+                                                fluorescence.iloc[::10].reset_index(), df_eye.iloc[::10].reset_index(), 
+                                                df_walk.iloc[::10].reset_index(), zoom, subj, ses, df_meta)
     fig.savefig(os.path.join(fig_dir, 'preprocess', 'preprocess_{}_{}_a.pdf'.format(subj, ses)), dpi=300)
+    
+    # save mean image for Matlab:
+    img = pd.DataFrame(ops['meanImg']) 
+    img.to_csv(os.path.join(fig_dir, 'preprocess', '{}_{}.csv'.format(subj, ses)))
 
     # epochs:
     epochs_c = utils.make_epochs(df=fluorescence, df_meta=df_meta, locking='time', start=-60, dur=120, measure='F', fs=fs,)
@@ -1825,127 +2103,36 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     epochs_c['width'] = np.array(df_meta['width'])
     epochs_c['subj_idx'] = subj
     epochs_c['session'] = ses
-    epochs_c['trial'] = np.arange(epochs_c.shape[0]) 
-    epochs_c = epochs_c.set_index(['subj_idx', 'session', 'trial', 'cell', 'amplitude', 'rate', 'width'])
+    epochs_c['trial'] = np.arange(epochs_c.shape[0])
+    epochs_c['time'] = np.array(df_meta['time'])
+    epochs_c = epochs_c.set_index(['subj_idx', 'session', 'trial', 'cell', 'amplitude', 'rate', 'width', 'time'])
 
-    # fig = plt.figure(figsize=(4,2))
-    # ax = fig.add_subplot(121)
-    # ax.scatter(image_pos_x, image_pos_y)
-    # ax.set_xlabel('Image position x')
-    # ax.set_ylabel('Image position y')
-    # ax = fig.add_subplot(122)
-    # ax.scatter(image_motion_x, image_motion_y)
-    # ax.set_xlabel('Image motion x')
-    # ax.set_ylabel('Image motion y')
-    # plt.tight_layout()
-    # fig.savefig(os.path.join(fig_dir, 'preprocess', 'preprocess_{}_{}_b.pdf'.format(subj, ses)), dpi=300)
-
-    # d = pd.DataFrame({
-    #     'x_shift': abs(ops['xoff']),
-    #     'y_shift': abs(ops['yoff']),
-    #     'corr': abs(ops['corrXY']),
-    # })
-    # d.to_csv(os.path.join(fig_dir, 'preprocess', 'preprocess_{}_{}.csv'.format(subj, ses)))
-
-    # inds = ((df_meta['time'] - float(time.iloc[0])) * fs).astype(int)
-    # inds.to_csv(os.path.join(fig_dir, 'preprocess', 'preprocess_{}_{}_indices.csv'.format(subj, ses)))
-
-    # # cells:
-    # iscell = np.load(os.path.join(imaging_dir, subj, ses, 'suite2p', 'plane0', 'iscell.npy'))
-    # cell_indices = (iscell[:,0] == 1)
-    
-    # # if sum(iscell[:,0]) > 0:
-        
-    #     # load data:
-    #     fluorescence = pd.DataFrame(np.load(os.path.join(imaging_dir, subj, ses, 'suite2p', 'plane0', 'F.npy'))[cell_indices,:][:,:len(time)])
-    #     neuropil = pd.DataFrame(np.load(os.path.join(imaging_dir, subj, ses, 'suite2p', 'plane0', 'Fneu.npy'))[cell_indices,:][:,:len(time)])
-    #     fluorescence = fluorescence - (0.7 * neuropil)
-
-    #     # spikes = pd.DataFrame(np.load(os.path.join(imaging_dir, subj, ses, 'suite2p', 'plane0', 'spks.npy'))[cell_indices,:][:,:len(time)])
-    #     time = time[:fluorescence.shape[1]]
-
-    #     # add timestamps:
-    #     fluorescence.columns = time.values.ravel() 
-    #     # spikes.columns = time.values.ravel() 
-    #     # neuropil.columns = time.values.ravel() 
-
-    #     # filter:
-    #     # fluorescence = fluorescence.rolling(window=3, center=True, min_periods=1, axis='columns').median()
-    #     # fluorescence = fluorescence.rolling(window=5, center=True, min_periods=1, axis='columns').mean()
-    #     for i in range(fluorescence.shape[0]):
-    #         fluorescence.iloc[i] = utils._butter_lowpass_filter(fluorescence.iloc[i], highcut=1, fs=fs, order=3)
-
-    #     # fnorm:
-    #     fluorescence.loc[:,:] = ((fluorescence.values - np.atleast_2d(np.min(fluorescence.values, axis=1)).T) / 
-    #                         (np.atleast_2d(np.percentile(fluorescence.values, 99, axis=1)).T - np.atleast_2d(np.min(fluorescence.values, axis=1)).T))
-
-    #     # first check for activity (excluding bad frames) --> power of asynchronous sampled
-        
-    #     # second correlation pooling  (excluding bad frames):
-    #     badframes = ops['badframes'][:len(time)]
-    #     fluorescence_clustered = hierarchical_cluster(fluorescence.T, min_r=0.75, include=~badframes)
-    #     fig = plot_corr(fluorescence_clustered.corr())
-    #     fig.savefig(os.path.join(fig_dir, 'preprocess', 'preprocess_{}_{}_c.pdf'.format(subj, ses)), dpi=300)
-
-    #     # take mean per cluster:
-    #     fluorescence = fluorescence_clustered.groupby(by=fluorescence_clustered.columns, axis=1).mean().T
-        
-    #     # check if axon has sufficient SNR (check supplement)
-        
-    #     # make epochs:
-    #     epochs = []
-    #     for i in range(fluorescence.shape[0]):
-    #         df = fluorescence.iloc[i,:].reset_index()
-    #         df.columns = ['time', 'F']
-    #         epoch = utils.make_epochs(df=df, df_meta=df_meta, locking='time', start=-10, dur=30, measure='F', fs=fs,)
-    #         epoch['cell'] = (np.ones(epoch.shape[0]) * i).astype(int)
-    #         epoch['amplitude'] = np.array(df_meta['amplitude_b'])
-    #         epoch['rate'] = np.array(df_meta['rate'])
-    #         epoch['width'] = np.array(df_meta['width'])
-    #         epoch['subj_idx'] = subj
-    #         epoch['session'] = ses
-    #         epoch['trial'] = np.arange(epoch.shape[0]) 
-    #         epoch = epoch.set_index(['subj_idx', 'session', 'trial', 'cell', 'amplitude', 'rate', 'width'])
-    #         epochs.append(epoch)
-    #     epochs = pd.concat(epochs, axis=0)
-    #     x = np.array(epochs.columns, dtype=float)
-
-    #     # session figure:
-    #     fig = plt.figure(figsize=(9,2+(fluorescence.shape[0]/2)))
-        
-    #     colors = sns.color_palette(n_colors=fluorescence.shape[0])
-        
-    #     gs = gridspec.GridSpec(1, 5)
-    #     ax = plt.subplot(gs[0:1,0:4])
-    #     offset = 0
-    #     for i in range(fluorescence.shape[0]):
-    #         ax.plot(time/60, fluorescence.iloc[i]+offset, alpha=0.75, color=colors[i])
-    #         offset += np.percentile(np.array(fluorescence).ravel(), 99)
-    #     for t in df_meta['time']:
-    #         plt.axvline(t/60, lw=0.5, color='r')
-    #     plt.ylabel('Fluorescence')
-    #     plt.xlabel('Time (min)')
-    #     ylim = ax.get_ylim() 
-
-    #     ax = plt.subplot(gs[0:1,4:5])
-    #     offset = 0
-    #     for i in range(fluorescence.shape[0]):
-    #         for p in df_meta['time']:
-    #             ind = (fluorescence.columns>(p-10)) & (fluorescence.columns<(p+20))
-    #             ind_b = (fluorescence.columns>(p-5.5)) & (fluorescence.columns<(p+0.5))
-    #             resp = fluorescence.iloc[i,ind] - fluorescence.iloc[i,ind_b].mean()
-    #             x = np.linspace(-10,20,len(resp))
-    #             ax.plot(x, resp+offset, lw=0.5, alpha=1, color=colors[i])
-    #         offset += np.percentile(np.array(fluorescence).ravel(), 99)
-    #     plt.axvline(0, lw=0.5, color='r')
-    #     ax.set_ylim(ylim)
-    #     plt.ylabel('Fluorescence')
-    #     plt.xlabel('Time (min)')
-        
-    #     sns.despine(trim=False, offset=3)
-    #     plt.tight_layout()
-    #     fig.savefig(os.path.join(fig_dir, 'vns_{}_{}_session.pdf'.format(subj, ses)))
-        
     return epochs_c, epochs_x, epochs_y, epochs_corr, epochs_v, epochs_p, epochs_l, epochs_b
 
+def analyse_light_control_session(raw_dir, data_dir, fig_dir, subj, ses, fs_resample='20L'):
+    
+    # get image timestamps:
+    file_tdms = [fn for fn in glob.glob(os.path.join(raw_dir, subj, ses, '*.tdms')) if not 'h264' in fn][0]
+    file_frames = [fn for fn in glob.glob(os.path.join(raw_dir, subj, ses, '*frame*.txt')) if not 'h264' in fn][0]
+    file_pupil = [fn for fn in glob.glob(os.path.join(data_dir, 'preprocess', subj, ses, '*.hdf'))][0]
+    
+    ### get pulses:
+    df_meta = utils.get_vns_timestamps_tdms(file_tdms)
+    df_meta['width'] = df_meta['width'].round(1)
+    df_meta['rate'] = df_meta['rate'].astype(int)+1
+    df_meta['amplitude_bin'] = pd.cut(df_meta['amplitude'], bins=np.array([0,0.2,0.4,0.6,0.8,1]), labels=False,)
+    df_meta['amplitude'] = np.round((df_meta['amplitude_bin']*0.2)+0.1,1)
+    df_meta['time2'] = df_meta['time']-2
 
+    ### GET WALKING DATA ###
+    df_walk = process_walk_data(file_tdms, fs_resample=fs_resample)
+
+    ### GET EYE DATA ###
+    df_eye = process_eye_data(file_frames, file_tdms, file_pupil, subj, ses, fig_dir, use_dlc_blinks=False, fs_resample=fs_resample)
+
+    # make epochs:
+    fs = 50
+    epochs_p = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='pupil_int_lp_frac', fs=fs)
+    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='is_blink', fs=fs)
+
+    return df_meta, epochs_p, epochs_b
