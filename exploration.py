@@ -131,14 +131,24 @@ blink_cutoff = 0.1
 
 # session leaks:
 # --------------
-fig = plt.figure(figsize=(9,3))
-for i, cuff_type in enumerate(['intact', 'single', 'double']):
-    ax = fig.add_subplot(1,3,i+1)
-    ax.hist(df_meta.loc[df_meta['cuff_type']==cuff_type, :].groupby(['subj_idx', 'session']).mean()['leak'], bins=50)
-    plt.axvline(leak_cut_off, ls='--', color='r')
-    plt.title(cuff_type)
-    plt.xlabel('Leak fraction')
-    plt.ylabel('Sessions (#)')
+# fig = plt.figure(figsize=(9,3))
+# for i, cuff_type in enumerate(['intact', 'single', 'double']):
+#     ax = fig.add_subplot(1,3,i+1)
+#     ax.hist(df_meta.loc[df_meta['cuff_type']==cuff_type, :].groupby(['subj_idx', 'session']).mean()['leak'], bins=50)
+#     plt.axvline(leak_cut_off, ls='--', color='r')
+#     plt.title(cuff_type)
+#     plt.xlabel('Leak fraction')
+#     plt.ylabel('Sessions (#)')
+# sns.despine(trim=False, offset=3)
+# plt.tight_layout()
+# fig.savefig(os.path.join(fig_dir, 'leak_fractions.pdf'))
+
+fig = plt.figure(figsize=(2,2))
+ax = fig.add_subplot(1,1,1)
+ax.hist(df_meta.groupby(['subj_idx', 'session']).mean()['leak'], bins=25)
+plt.axvline(leak_cut_off, ls='--', color='r')
+plt.xlabel('Leak fraction')
+plt.ylabel('Sessions (#)')
 sns.despine(trim=False, offset=3)
 plt.tight_layout()
 fig.savefig(os.path.join(fig_dir, 'leak_fractions.pdf'))
@@ -247,6 +257,20 @@ ind_w = ((df_meta['velocity_1'] < velocity_cutoff[0]) | (df_meta['velocity_1'] >
 # epochs_p = epochs_p.loc[df_meta['blink']==0,:].reset_index(drop=True)
 # df_meta = df_meta.loc[df_meta['blink']==0,:].reset_index(drop=True)
 
+shell()
+
+mins = []
+medians = []
+maxs = []
+for (subj, ses), df in df_meta.groupby(['subj_idx', 'session']):
+    mins.append(df['time'].diff().max())
+    medians.append(df['time'].diff().median())
+    maxs.append(df['time'].diff().min())
+print(min(mins))
+print(np.median(medians))
+print(max(maxs))
+
+
 # correct scalars:
 for group in [ind_u, ind_g]:
     df_meta, figs = vns_analyses.correct_scalars(df_meta, group=group, velocity_cutoff=velocity_cutoff, ind_clean_w=ind_clean_w)
@@ -332,35 +356,52 @@ fig.savefig(os.path.join(fig_dir, 'pupil_responses_g.pdf'))
 # plt.tight_layout()
 # fig.savefig(os.path.join(fig_dir, 'histograms.pdf'))
 
+
 # velocity historgram:
 # --------------------
-fig = plt.figure(figsize=(8,2))
-ax = fig.add_subplot(141)
-ax.hist(df_meta.loc[ind_s&ind_u, 'velocity'], bins=50, density=False, histtype='stepfilled')
+
+bins = 30
+
+fig = plt.figure(figsize=(6,6))
+
+ax = fig.add_subplot(331)
+ax.hist(df_meta.loc[ind_u, 'velocity'], bins=bins, density=False, histtype='stepfilled')
 plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
 plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
-plt.ylim(0,800)
+# plt.ylim(0,800)
+
+ax = fig.add_subplot(332)
+ax.hist(df_meta.loc[ind_s&ind_u, 'velocity'], bins=bins, density=False, histtype='stepfilled')
+plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
+plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
+# plt.ylim(0,800)
 ax.set_title('{}%'.format(round(np.sum(ind_s[ind_u&ind_clean_w])/np.sum(ind_u&ind_clean_w)*100,1)))
 
-ax = fig.add_subplot(142)
-ax.hist(df_meta.loc[ind_s&ind_g, 'velocity'], bins=50, density=False, histtype='stepfilled')
+ax = fig.add_subplot(333)
+ax.hist(df_meta.loc[ind_w&ind_u, 'velocity'], bins=bins, density=False, histtype='stepfilled')
 plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
 plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
-plt.ylim(0,800)
-ax.set_title('{}%'.format(round(np.sum(ind_s[ind_g&ind_clean_w])/np.sum(ind_g&ind_clean_w)*100,1)))
-
-ax = fig.add_subplot(143)
-ax.hist(df_meta.loc[ind_w&ind_u, 'velocity'], bins=50, density=False, histtype='stepfilled')
-plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
-plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
-plt.ylim(0,800)
+# plt.ylim(0,800)
 ax.set_title('{}%'.format(round(np.sum(ind_w[ind_u&ind_clean_w])/np.sum(ind_u&ind_clean_w)*100,1)))
 
-ax = fig.add_subplot(144)
-ax.hist(df_meta.loc[ind_w&ind_g, 'velocity'], bins=50, density=False, histtype='stepfilled')
+ax = fig.add_subplot(334)
+ax.hist(df_meta.loc[ind_g, 'velocity'], bins=bins, density=False, histtype='stepfilled')
 plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
 plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
-plt.ylim(0,800)
+# plt.ylim(0,800)
+
+ax = fig.add_subplot(335)
+ax.hist(df_meta.loc[ind_s&ind_g, 'velocity'], bins=bins, density=False, histtype='stepfilled')
+plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
+plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
+# plt.ylim(0,800)
+ax.set_title('{}%'.format(round(np.sum(ind_s[ind_g&ind_clean_w])/np.sum(ind_g&ind_clean_w)*100,1)))
+
+ax = fig.add_subplot(336)
+ax.hist(df_meta.loc[ind_w&ind_g, 'velocity'], bins=bins, density=False, histtype='stepfilled')
+plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
+plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
+# plt.ylim(0,800)
 ax.set_title('{}%'.format(round(np.sum(ind_w[ind_g&ind_clean_w])/np.sum(ind_g&ind_clean_w)*100,1)))
 plt.tight_layout()
 sns.despine(trim=False, offset=3)
@@ -405,18 +446,34 @@ fig.savefig(os.path.join(fig_dir, 'preprocess', 'leak_fractions_time.pdf'))
 def leak_fractions(df):
     d = df.loc[(df['width']>0.2),:].groupby(['subj_idx', 'session', 'amplitude_bin']).mean().reset_index()
     d['leak_fraction'] = 1 - (d['amplitude_m']/d['amplitude'])
-    fig = plt.figure(figsize=(4,2))
-    ax = fig.add_subplot(121)
+    
+    fig = plt.figure(figsize=(6,4))
+    plt_nr = 1
+    ax = fig.add_subplot(2,3,plt_nr)
     for (subj, ses), dd in d.groupby(['subj_idx', 'session']):
         plt.plot(dd['amplitude'], dd['leak_fraction'])
     plt.xlabel('Amplitude intended')
     plt.ylabel('Leak fraction')
-    ax = fig.add_subplot(122)
-    d = d.groupby(['subj_idx', 'session']).mean().reset_index()
-    ind = (~np.isnan(d['impedance']))# & (d['amplitude_bin']==4)
-    plt.scatter(d.loc[ind,'impedance'], d.loc[ind,'leak_fraction'])
-    plt.xlabel('Impedance')
-    plt.ylabel('Leak fraction')
+    
+    ylim = ax.get_ylim()
+
+    plt_nr += 1
+    
+    for b in [0,1,2,3,4]:
+        ax = fig.add_subplot(2,3,plt_nr)
+        dd = d.loc[d['amplitude_bin']==b,:].groupby(['subj_idx', 'session']).mean().reset_index()
+        ind = (~np.isnan(dd['impedance']))# & (d['amplitude_bin']==4)
+        sns.regplot(dd.loc[ind,'impedance'], dd.loc[ind,'leak_fraction'], line_kws={'color': 'red'})
+        
+        r,p = sp.stats.pearsonr(dd.loc[ind,'impedance'], dd.loc[ind,'leak_fraction'])
+        ax.set_title('r = {}, p = {}'.format(round(r,3), round(p,3)))
+
+        ax.set_ylim(ylim)
+        plt.xlabel('Impedance')
+        plt.ylabel('Leak fraction')
+
+        plt_nr += 1
+
     plt.tight_layout()
     sns.despine(trim=False, offset=3)    
     return fig
@@ -464,37 +521,6 @@ plt.tight_layout()
 sns.despine(trim=False, offset=3)
 fig.savefig(os.path.join(fig_dir, 'varation_across_session.pdf'))
 
-# means = df_meta.loc[(df_meta['cuff_type']=='intact')].groupby(['subj_idx', 'session'])[['pupil_c', 'leak']].mean().reset_index()
-
-
-# for ct in ['intact', 'single', 'double']:
-
-#     means = df_meta.loc[(df_meta['cuff_type']==ct)].groupby(['subj_idx', 'session'])[['pupil_c', 'leak']].mean().reset_index()
-#     fig = plt.figure(figsize=(2,2))
-#     sns.regplot(means['leak'], means['pupil_c'])
-#     r,p = sp.stats.pearsonr(means['leak'], means['pupil_c'])
-#     plt.title('r = {}, p = {}'.format(round(r,3), round(p,3)))
-#     plt.xlabel('Leak')
-#     plt.ylabel('Pupil response')
-#     plt.tight_layout()
-#     sns.despine(trim=False, offset=3)
-#     fig.savefig(os.path.join(fig_dir, 'leak_correlation_{}.pdf'.format(ct)))
-
-for subj in df_meta['subj_idx'].unique():
-    for ses in df_meta['session'].unique():
-        ind = (df_meta['subj_idx'] == subj) & (df_meta['session'] == ses)
-        if sum(ind) > 0:
-            print('yes')
-            # df_meta.loc[ind, 'pupil_c3'] = ((df_meta.loc[ind, 'pupil_c'] - df_meta.loc[ind, 'pupil_c'].mean()) / df_meta.loc[ind, 'pupil_c'].std()) + 1
-            # df_meta.loc[ind, 'pupil_c3'] = df_meta.loc[ind, 'pupil_c'] / df_meta.loc[ind, 'pupil_c'].max()
-            # df_meta.loc[ind, 'pupil_c3'] = df_meta.loc[ind, 'pupil_c'] / df_meta.loc[ind, 'pupil_c'].mean()
-            df_meta.loc[ind, 'pupil_c3'] = df_meta.loc[ind, 'pupil_c'] / df_meta.loc[ind, 'pupil_c'].median()
-            
-            
-            # df_meta.loc[ind, 'eyelid_c3'] = df_meta.loc[ind, 'eyelid_c2'] / df_meta.loc[ind, 'eyelid_c2'].std()
-            # df_meta.loc[ind, 'velocity_c3'] = df_meta.loc[ind, 'velocity_c2'] / df_meta.loc[ind, 'velocity_c2'].std()
-            # df_meta.loc[ind, 'walk_c3'] = df_meta.loc[ind, 'walk_c2'] / df_meta.loc[ind, 'walk_c2'].std()
-
 # time courses:
 # -------------
 imp.reload(vns_analyses)
@@ -516,9 +542,9 @@ for measure in ['pupil', 'velocity', 'walk', 'eyelid',]:
             ylim = ylims[measure]
             if (measure == 'blink'):
                 ylim = (ylim[0], ylim[1]/3)
-            if (measure == 'pupil') & (title=='us'):
-                ylim = (ylim[0], ylim[1]/3)
-
+            if (measure == 'pupil') & (title=='g'):
+                ylim = (ylim[0], ylim[1]*2)
+            
             if not measure == 'walk':
                 x = np.array(epochs[measure].columns, dtype=float)
                 fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[:,(x>=-20)&(x<=40)].loc[ind,::10], timewindows=timewindows, ylabel=measure+'_1', ylim=ylim)

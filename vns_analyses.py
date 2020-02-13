@@ -306,7 +306,6 @@ def plot_param_preprocessing(df, popt=None, popts=None):
 
     X = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width'])
     y = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['amplitude_m'])
-    y_sem = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width'])['amplitude_m'].sem())
 
     widths = np.unique(df['width'])
 
@@ -320,7 +319,7 @@ def plot_param_preprocessing(df, popt=None, popts=None):
                                         np.array(df.loc[df['amplitude_m_bin']==b,:].groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['amplitude_m']))
             popts.append(_popt)
     
-    fig = plt.figure(figsize=(9,12))
+    fig = plt.figure(figsize=(6,8))
     gs = gridspec.GridSpec(4,3)
 
     ax = plt.subplot(gs[0,0])
@@ -370,6 +369,7 @@ def plot_param_preprocessing(df, popt=None, popts=None):
     ax = plt.subplot(gs[1,1])
     x = np.linspace(X.min(), X.max(), 50)
     y_fit = func(x, *popt)
+    y_sem = df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin'])['amplitude_m'].sem().reset_index().groupby('width').mean()['amplitude_m']
     plt.errorbar(x=X, y=y, yerr=y_sem, fmt='None', ecolor='black', capsize=2, zorder=2)
     ax.plot(X, y, 'o', label='data')
     ax.plot(x, y_fit, label='fit', color='orange')
@@ -433,6 +433,8 @@ def plot_param_preprocessing(df, popt=None, popts=None):
 
     sns.despine(trim=False, offset=3)
     plt.tight_layout()
+
+    shell()
 
     return fig
 
@@ -1711,7 +1713,7 @@ def process_eye_data(file_meta, file_tdms, file_pupil, subj, ses, fig_dir, use_d
         preprocess_pupil.interpolate_blinks(df=df_eye, fs=fs, measure=measure, 
                                             blink_detection_measures=[blink_measure], cutoffs=[blink_cutoff], 
                                             coalesce_period=0.75, buffer=0.15, use_dlc_blinks=use_dlc_blinks)
-        preprocess_pupil.temporal_filter(df=df_eye, measure='{}_int'.format(measure), fs=fs, hp=0.1, lp=3, order=3)
+        preprocess_pupil.temporal_filter(df=df_eye, measure='{}_int'.format(measure), fs=fs, hp=0.01, lp=3, order=3)
         preprocess_pupil.fraction(df=df_eye, measure='{}_int_lp'.format(measure))
         preprocess_pupil.slope(df=df_eye, measure='{}_int_lp_frac'.format(measure))
 

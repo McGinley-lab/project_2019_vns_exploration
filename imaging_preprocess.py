@@ -12,47 +12,22 @@ from tools_mcginley import utils
 from IPython import embed as shell
 
 subjects = {
-    'C7A2':  ['1',      '3', '4', '5', '6', '7', '8'],
-    'C7A6':  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
+    # 'C7A2':  ['1',      '3', '4', '5', '6', '7', '8'],
+    # 'C7A6':  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
     'C1772': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
     'C1773': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'],
-    
-    
-    
-    'D1574': ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
-    'D1640': ['1', '2', '3', '4'], # all bad
-    'D1641': ['1', '2',      '4'], 
-    'D1766': ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
-    'D1767': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
-}
-
-subjects = {
-    'C7A2': ['1', '8'],
-    'C7A6': ['1', '2', '3', '5', '6', '7', '8',],  
-    'C1772': ['1', '5', '6', '7', '8',],
-    'C1773': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'],
-}
-
-subjects = {
-    'D1766': ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
-    # 'D1767': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
 }
 
 # subjects = {
-#     'C1772': ['7'],
+#     'D1574': ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
+#     'D1640': ['1', '2', '3', '4'], # all bad
+#     'D1641': ['1', '2',      '4'], 
+#     'D1766': ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
+#     'D1767': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
 # }
 
-subjects = {
-    'C7A2': ['1',],
-    'C7A6': ['1', '7', '8',],  
-    'C1772': ['6', '7', '8',],
-    'C1773': ['5', '6', '7', '8', '10'],
-    # 'C1772': ['7'],
-}
-
-
 raw_dir = '/media/external4/2p_imaging/vns/'
-temp_dir = '/media/internal1/vns/'
+temp_dir = '/media/internal2/vns/'
 
 # default zoom:
 default_zoom = 4
@@ -60,7 +35,7 @@ default_size = 512 # in pixels
 maxregshift = 20 # in micron
 maxregshift_std = 4 # in micron
 
-run_suite2p = 0
+run_suite2p = 1
 plotting = 1
 merging = 0
 
@@ -117,7 +92,7 @@ for subj in subjects.keys():
                 'frames_include' : -1,
                 
                 # motion correction:
-                'do_registration': True,
+                'do_registration': 2,
                 'two_step_registration': True,
                 'nonrigid': False,
                 'nimg_init': 2500,
@@ -128,7 +103,7 @@ for subj in subjects.keys():
                 'smooth_sigma_time' : 2,
                 
                 # roi detection:
-                'roidetect': False,
+                'roidetect': True,
                 'sparse_mode': True,
                 }
 

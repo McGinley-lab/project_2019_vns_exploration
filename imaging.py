@@ -62,7 +62,7 @@ def mediation_analysis(df, X, Y, M, bootstrap=True, n_boot=1000, n_jobs=12):
         y2 = np.array([float(res.loc[res['label']=='total','ci.upper']), float(res.loc[res['label']=='ab','ci.upper']), float(res.loc[res['label']=='c','ci.upper'])])
         ci = (y2-y1)/2
 
-    fig = plt.figure(figsize=(8,2))
+    fig = plt.figure(figsize=(6,2))
     ax = fig.add_subplot(141)
     plt.bar([0,1,2], y, yerr=ci)
     for x,p in zip([0,1,2],p_values):
@@ -528,6 +528,17 @@ df_meta['imagex'] = abs(df_meta['imagex_1']-df_meta['imagex_0'])
 df_meta['imagey'] = abs(df_meta['imagey_1']-df_meta['imagey_0'])
 df_meta['corrXY'] = df_meta['corrXY_1']-df_meta['corrXY_0']
 
+# motion figure
+nr_trials = np.sum((df_meta['imagex']<=motion_cutoff) & (df_meta['imagey']<=motion_cutoff))
+g = sns.jointplot("imagex", "imagey", data=df_meta, marginal_kws=dict(bins=50), color="m", height=2.5)
+g.fig.axes[0].axvline(motion_cutoff, ls='--', color='r')
+g.fig.axes[0].axhline(motion_cutoff, ls='--', color='r')
+plt.title('{} / {} pulses'.format(nr_trials, df_meta.shape[0]))
+# sns.despine(trim=False, offset=3)
+# plt.tight_layout()
+g.savefig(os.path.join(fig_dir, 'image_motion.pdf'))
+
+
 # throw away weird trial:
 remove = np.array(
         (df_meta['subj_idx'] == 'C1773') & (df_meta['session']=='8') & (df_meta['trial']==17) | # weird trial with crazy spike
@@ -567,8 +578,6 @@ epochs_c = epochs_c.set_index('group', append=True)
 # correct scalars:
 df_meta, figs = vns_analyses.correct_scalars(df_meta, group=np.ones(df_meta.shape[0], dtype=bool), velocity_cutoff=velocity_cutoff, ind_clean_w=ind_clean_w)
 
-# shell()
-
 figs[0].savefig(os.path.join(fig_dir, 'pupil_reversion_to_mean1.pdf'))
 figs[1].savefig(os.path.join(fig_dir, 'pupil_reversion_to_mean2.pdf'))
 figs[2].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean1.pdf'))
@@ -584,21 +593,75 @@ figs[11].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean2.pdf'))
 figs[12].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean3.pdf'))
 figs[13].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean4.pdf'))
 
+
+
 # motion figure
 fig = plt.figure(figsize=(4,10))
 plt_nr = 1
 for X in ['imagex', 'imagey', 'corrXY_0', 'corrXY_1', 'corrXY']:
     ax = fig.add_subplot(5,2,plt_nr)
     plt.hist(df_meta[X], alpha=0.5, bins=12, histtype='stepfilled')
-    # plt.axvline(motion_cutoff, ls='--', color='r')
-    plt.axvline(df_meta[X].mean(), ls='-', color='k')
+    if 'image' in X:
+        plt.axvline(motion_cutoff, ls='--', color='r')
+    else:
+        plt.axvline(df_meta[X].mean(), ls='-', color='k')
     plt_nr += 1
     ax = fig.add_subplot(5,2,plt_nr)
     sns.regplot(df_meta[X], df_meta['calcium_c'], line_kws={'color': 'red'})
     plt_nr += 1
 sns.despine(trim=False, offset=3)
 plt.tight_layout()
-fig.savefig(os.path.join(fig_dir, 'image_motion.pdf'))
+fig.savefig(os.path.join(fig_dir, 'image_motion2.pdf'))
+
+
+shell()
+
+
+
+# velocity historgram:
+# --------------------
+
+ind_clean_w = ~(np.isnan(df_meta['velocity_1'])|np.isnan(df_meta['velocity_0']))
+ind_s = ((df_meta['velocity_1'] >= velocity_cutoff[0]) & (df_meta['velocity_1'] <= velocity_cutoff[1])) & ~np.isnan(df_meta['velocity_1'])
+ind_w = ((df_meta['velocity_1'] < velocity_cutoff[0]) | (df_meta['velocity_1'] > velocity_cutoff[1])) & ~np.isnan(df_meta['velocity_1'])
+
+
+bins = 100
+
+fig = plt.figure(figsize=(6,2))
+
+ax = fig.add_subplot(131)
+ax.hist(df_meta.loc[:, 'velocity'], bins=bins, density=False, histtype='stepfilled')
+plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
+plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
+# plt.ylim(0,800)
+
+ax = fig.add_subplot(132)
+ax.hist(df_meta.loc[ind_s, 'velocity'], bins=bins, density=False, histtype='stepfilled')
+plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
+plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
+# plt.ylim(0,800)
+ax.set_title('{}%'.format(round(np.sum(ind_s[ind_clean_w])/np.sum(ind_clean_w)*100,1)))
+
+ax = fig.add_subplot(133)
+ax.hist(df_meta.loc[ind_w, 'velocity'], bins=bins, density=False, histtype='stepfilled')
+plt.axvline(velocity_cutoff[0], color='r', ls='--', lw=0.5)
+plt.axvline(velocity_cutoff[1], color='r', ls='--', lw=0.5)
+# plt.ylim(0,800)
+ax.set_title('{}%'.format(round(np.sum(ind_w[ind_clean_w])/np.sum(ind_clean_w)*100,1)))
+
+plt.tight_layout()
+sns.despine(trim=False, offset=3)
+fig.savefig(os.path.join(fig_dir, 'velocity_hist.pdf'))
+
+
+
+
+
+
+
+
+
 
 #####################################################################################################
 
@@ -665,7 +728,7 @@ epochs = {
 
 
 imp.reload(vns_analyses)
-for measure in ['calcium', 'pupil', 'velocity', 'walk', 'eyelid', 'corrXY']:
+for measure in ['corrXY', 'calcium', 'pupil', 'velocity', 'walk', 'eyelid',]:
 # for measure in ['pupil', 'calcium', 'imagex', 'imagey']:
 # for measure in ['pupil']:
 
@@ -698,7 +761,7 @@ for measure in ['calcium', 'pupil', 'velocity', 'walk', 'eyelid', 'corrXY']:
 
         for measure_ext in measure_exts:
             
-            if (measure == 'calcium') or (measure == 'corrXY'):
+            if (measure == 'calcium'):
                 p0 = True
             else:
                 p0 = False

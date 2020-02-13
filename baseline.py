@@ -221,6 +221,19 @@ plt.tight_layout()
 sns.despine(trim=False, offset=3)
 fig.savefig(os.path.join(fig_dir, 'pupil_state_dependence.pdf'))
 
+shell()
+
+
+from sklearn import feature_selection
+df_meta['pupil_0_2'] = df_meta['pupil_0']**2
+df_meta['pupil_0_3'] = df_meta['pupil_0']**3
+df_meta['pupil_0_4'] = df_meta['pupil_0']**4
+df_meta['pupil_0_5'] = df_meta['pupil_0']**5
+feature_selection.f_regression(X=df_meta[['pupil_0', 'pupil_0_2', 'pupil_0_3', 'pupil_0_4', 'pupil_0_5']], y=df_meta['pupil_c'])
+
+
+
+
 # sf = 500
 # win = 15 * sf
 # x = epochs_p.columns
