@@ -67,16 +67,16 @@ def sample_frames(ops, ix, reg_file, crop=True):
     return mov
 
 raw_dir = '/media/external4/2p_imaging/vns/'
-temp_dir = '/media/internal1/vns/'
-# temp_dir = '/media/internal2/vns/'
+# temp_dir = '/media/internal1/vns/'
+temp_dir = '/media/internal2/vns/'
 
 run_stats = True
 
 subjects = {
-    'C7A2':  ['1',      '3', '4', '5', '6', '7', '8'],
-    'C7A6':  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
-    # 'C1772': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
-    # 'C1773': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'],
+    # 'C7A2':  ['1',      '3', '4', '5', '6', '7', '8'],
+    # 'C7A6':  ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
+    'C1772': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
+    'C1773': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'],
 }
 for subj in subjects.keys():
     for session in subjects[subj]:
@@ -106,7 +106,7 @@ for subj in subjects.keys():
             df_pulse['width'] = df_pulse['width'].round(1)
             df_pulse['rate'] = df_pulse['rate'].astype(int)
             df_pulse['amplitude_b'] = pd.cut(df_pulse['amplitude'], bins=np.array([0,0.2,0.4,0.6,0.8,1]), labels=False,)
-
+            
             # splits:
             df_pulse['group'] = 0
             df_pulse.loc[(df_pulse['amplitude_b']==4)&(df_pulse['width']==0.4), 'group'] = 3

@@ -53,7 +53,7 @@ for subj in subjects:
 
 
 
-preprocess = False
+preprocess = True
 if preprocess:
     n_jobs = 12
     res = Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(analyse_light_control_session)(*task) for task in tasks)
@@ -88,12 +88,19 @@ epochs_p = pd.read_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil') * 10
 epochs_b = pd.read_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
 print('finished loading data')
 
+
+shell()
+
+# sample size:
+print('subjects: {}'.format(df_meta.loc[:,:].groupby(['subj_idx']).count().shape[0]))
+print('sessions: {}'.format(df_meta.loc[:,:].groupby(['subj_idx', 'session']).count().shape[0]))
+
+
 # baseline:
 x = epochs_p.columns
 epochs_p = epochs_p - np.atleast_2d(epochs_p.loc[:,(x>=-5)&(x<=-0)].mean(axis=1)).T
 
 epochs_p = epochs_p.loc[:,(x>=-20)&(x<=40)]
-
 
 # plot:
 fig = plt.figure(figsize=(2,2))

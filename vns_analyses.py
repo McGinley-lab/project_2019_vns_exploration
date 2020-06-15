@@ -39,7 +39,7 @@ def log_logistic(x, a, b, s):
 def log_logistic_3d(M, a1, b1, s, a2, b2):
     x = M[:,0]
     y = M[:,1]
-    return (s/(1+((x/a1)**-b1))) * (1/(1+((y/a2)**-b2)))
+    return (s / (1+ ( (x/a1) **-b1 ) )) * (1/(1+((y/a2)**-b2)))
 
 def log_logistic_4d(M, a1, b1, s, a2, b2, a3, b3):
     x = M[:,0]
@@ -71,6 +71,50 @@ def gaus(x,a,x0,sigma,b):
     from scipy import asarray as ar,exp
     return a*exp(-(x-x0)**2/(2*sigma**2)) + b*x
 
+def fit_log_logistic(df_meta, measure, resample=False):
+    
+    if resample:
+        # df_meta = df_meta.sample(n=df_meta.shape[0], replace=True)
+        df_meta = df_meta.groupby(['amplitude_bin', 'width_bin', 'rate_bin']).apply(lambda x: x.sample(frac=1, replace=1)).reset_index(drop=True)
+
+    # fit function:
+    x = np.array(df_meta.loc[:,['amplitude', 'width', 'rate']])
+    y = np.array(df_meta.loc[:,[measure]]).ravel()
+    if 'corrXY' in measure:
+        func = linear_4d
+        popt, pcov = curve_fit(func, x, y)
+    else:
+        func = log_logistic_4d
+        popt, pcov = curve_fit(func, x, y,
+                        method='trf', bounds=([0, 0, 0, 0, 0, 0, 0], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf]), max_nfev=50000)
+    predictions = func(x, *popt) 
+    r2 = (sp.stats.pearsonr(df_meta[measure], predictions)[0]**2) * 100
+
+    print()
+    print('3 paramater model:')
+    print('r2 = {}'.format(r2))
+    print('params = {}'.format([round(p,3) for p in popt]))
+
+    # fit function:
+    x = np.array(df_meta.loc[:,['charge', 'rate']])
+    y = np.array(df_meta.loc[:,[measure]]).ravel()
+    if 'corrXY' in measure:
+        func2 = linear_3d
+        popt2, pcov2 = curve_fit(func2, x, y)
+    else:
+        func2 = log_logistic_3d
+        popt2, pcov2 = curve_fit(func2, x, y,
+                        method='trf', bounds=([0, 0, 0, 0, 0,], [x[:,0].max(), np.inf, np.inf, x[:,1].max(), np.inf,]), max_nfev=50000)
+    predictions2 = func2(x, *popt2) 
+    r22 = (sp.stats.pearsonr(df_meta[measure], predictions2)[0]**2) * 100
+
+    print()
+    print('2 paramater model:')
+    print('r2 = {}'.format(r22))
+    print('params = {}'.format([round(p,3) for p in popt2]))
+
+    return popt2
+    
 def fig_image_quality(ref_img, mean_img, motion, calcium, eye, walk, zoom, subject, session, pulses):
 
     xmax = min((max(motion['time']), max(walk['time'])))
@@ -304,21 +348,12 @@ def plot_param_preprocessing(df, popt=None, popts=None):
 
     func = fsigmoid
 
-    X = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width'])
-    y = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['amplitude_m'])
-
+    df['amplitude_norm'] = df['amplitude_m']
+    for (subj, ses, amp), d in df.groupby(['subj_idx', 'session', 'amplitude_m_bin']):
+        df.loc[d.index, 'amplitude_norm'] = df.loc[d.index, 'amplitude_norm'] / max(df.loc[d.index, 'amplitude_norm'])
+        
     widths = np.unique(df['width'])
 
-    if popt is None:
-        popt, pcov = curve_fit(func, X, y, method='trf', bounds=([2, -0.75, y.max()/2],[20, 0.75, y.max()*2]))
-    if popts is None:
-        popts = []
-        for b in np.unique(df['amplitude_m_bin']):
-            _popt, _pcov = curve_fit(lambda x, s: func(x, popt[0], popt[1], s),
-                                        np.array(df.loc[df['amplitude_m_bin']==b,:].groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width']), 
-                                        np.array(df.loc[df['amplitude_m_bin']==b,:].groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['amplitude_m']))
-            popts.append(_popt)
-    
     fig = plt.figure(figsize=(6,8))
     gs = gridspec.GridSpec(4,3)
 
@@ -360,24 +395,42 @@ def plot_param_preprocessing(df, popt=None, popts=None):
     plt.xlim(0, 1)
     plt.xlabel('Pulse width')
     plt.ylabel('Pulse amplitude')
-    x = np.linspace(X.min(), X.max(), 50)
+    x = np.linspace(np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width']).min(), 
+                    np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width']).max(), 
+                    50)
+    if popts is None:
+        popts = []
+        for b in np.unique(df['amplitude_m_bin']):
+            X = np.array(df.loc[df['amplitude_m_bin']==b,:].groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width'])
+            y = np.array(df.loc[df['amplitude_m_bin']==b,:].groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['amplitude_m'])
+            popt_, pcov_ = curve_fit(func, X, y, method='trf', bounds=([2, -0.75, y.max()/2],[20, 0.75, y.max()*2]))
+            popts.append(popt_)
     for _popt in popts:
-        y_fit = func(x, popt[0], popt[1], _popt)
+        y_fit = func(x, *_popt)
         ax.plot(x, y_fit, color='orange')
     plt.xticks(np.unique(df['width']), np.unique(df['width']))
 
-    ax = plt.subplot(gs[1,1])
-    x = np.linspace(X.min(), X.max(), 50)
-    y_fit = func(x, *popt)
-    y_sem = df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin'])['amplitude_m'].sem().reset_index().groupby('width').mean()['amplitude_m']
-    plt.errorbar(x=X, y=y, yerr=y_sem, fmt='None', ecolor='black', capsize=2, zorder=2)
-    ax.plot(X, y, 'o', label='data')
-    ax.plot(x, y_fit, label='fit', color='orange')
+    ax = plt.subplot(gs[1,1])    
+    plt.errorbar(x=df.groupby(['subj_idx', 'session', 'width',]).mean().groupby(['width',]).mean().reset_index()['width'],
+            y=df.groupby(['subj_idx', 'session', 'width',]).mean().groupby(['width',]).mean().reset_index()['amplitude_norm'],
+            yerr=df.groupby(['subj_idx', 'session', 'width',]).mean().groupby(['width',])['amplitude_norm'].sem(),
+            fmt='None', ecolor='black', capsize=2, zorder=2)
+    ax.scatter(df.groupby(['subj_idx', 'session', 'width',]).mean().groupby(['width',]).mean().reset_index()['width'],
+                df.groupby(['subj_idx', 'session', 'width',]).mean().groupby(['width',]).mean().reset_index()['amplitude_norm'])
     plt.xlabel('Pulse width')
     plt.ylabel('Pulse amplitude (collapsed)')
-    plt.legend(loc='best')
     plt.xticks(np.unique(df['width']), np.unique(df['width']))
 
+    x = np.linspace(np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width']).min(), 
+                    np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width']).max(), 
+                    50)
+    if popt is None:
+        X = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['width'])
+        y = np.array(df.groupby(['subj_idx', 'session', 'width']).mean().groupby(['width']).mean().reset_index()['amplitude_norm'])
+        popt, pcov = curve_fit(func, X, y, method='trf', bounds=([2, -0.75, y.max()/2],[20, 0.75, y.max()*2]))
+    y_fit = func(x, *popt)
+    ax.plot(x, y_fit, color='orange')
+    
     ax = plt.subplot(gs[2,0])
     plt.errorbar(x=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['width'],
                 y=df.groupby(['subj_idx', 'session', 'width', 'amplitude_bin']).mean().groupby(['width', 'amplitude_bin']).mean().reset_index()['amplitude_m'],
@@ -434,10 +487,7 @@ def plot_param_preprocessing(df, popt=None, popts=None):
     sns.despine(trim=False, offset=3)
     plt.tight_layout()
 
-    shell()
-
     return fig
-
 
 def catplot_nr_trials(df, ind1, ind2, charge=None):
 
@@ -757,7 +807,7 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), 
 
         ax = fig.add_subplot(2,3,plot_nr)
         # colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
-        if 'pupil' in measure:
+        if ('pupil' in measure) or ('offset' in measure):
             colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
         elif 'calcium' in measure:
             colors = sns.color_palette("summer_r", len(means[bin_by[1]].unique()))
@@ -1242,27 +1292,33 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
 
     # correct pupil and eyelid scalars:
     # --------------------------------
-
-
+    
     figs = []
     if 'calcium_0' in df_meta.columns:
-        mm = ['pupil', 'eyelid', 'calcium']
+        mm = ['pupil', 'slope', 'eyelid', 'calcium']
     else:
-        mm = ['pupil', 'eyelid']
+        mm = ['pupil', 'slope', 'eyelid']
     for m in mm:
 
         # make random df:
         dfs = []
         # for i in [0,-1,-2]:
         for i in [0,-1,-2]:
-            try:
-                df = df_meta.loc[group,['{}_{}'.format(m, str(i)), '{}_{}'.format(m, str(i-1)), 'subj_idx', 'session']]
-                df = df.rename(columns={'{}_{}'.format(m, str(i)): m, '{}_{}'.format(m, str(i-1)): '{}_b'.format(m)}).reset_index(drop=True)
+            try:                
+                if m == 'slope':
+                    df = df_meta.loc[group,['{}_{}'.format(m, str(i)), '{}_{}'.format('pupil', str(i-1)), 'subj_idx', 'session']]    
+                    df = df.rename(columns={'{}_{}'.format(m, str(i)): m, '{}_{}'.format('pupil', str(i-1)): '{}_b'.format(m)}).reset_index(drop=True)
+                else:
+                    df = df_meta.loc[group,['{}_{}'.format(m, str(i)), '{}_{}'.format(m, str(i-1)), 'subj_idx', 'session']]
+                    df = df.rename(columns={'{}_{}'.format(m, str(i)): m, '{}_{}'.format(m, str(i-1)): '{}_b'.format(m)}).reset_index(drop=True)
                 dfs.append(df)
             except:
                 pass
         df = pd.concat(dfs)
-        df['{}_change'.format(m)] = df[m] - df['{}_b'.format(m)]
+        if m == 'slope':
+            df['{}_change'.format(m)] = df[m]
+        else:
+            df['{}_change'.format(m)] = df[m] - df['{}_b'.format(m)]
         # df['pupil_change'] = df['pupil']
 
         # bins:
@@ -1285,13 +1341,20 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
         figs.append(fig2)
 
         # uncorrected:
-        df_meta.loc[group, m] = df_meta.loc[group, '{}_1'.format(m)] - df_meta.loc[group, '{}_0'.format(m)]
+        if m == 'slope':
+            df_meta.loc[group, m] = df_meta.loc[group, '{}_1'.format(m)]
+        else:
+            df_meta.loc[group, m] = df_meta.loc[group, '{}_1'.format(m)] - df_meta.loc[group, '{}_0'.format(m)]
+        
         # df_meta['pupil'] = df_meta['pupil_1']
 
         # correct across subjects:
         popt, pcov = curve_fit(func, df.loc[~np.isnan(df['{}_b'.format(m)]), '{}_b'.format(m)], df.loc[~np.isnan(df['{}_b'.format(m)]), '{}_change'.format(m)])
-        df_meta.loc[group, '{}_c'.format(m)] = df_meta.loc[group, m] - func(df_meta.loc[group, '{}_0'.format(m)], *popt)
-        
+        if m == 'slope':
+            df_meta.loc[group, '{}_c'.format(m)] = df_meta.loc[group, m] - func(df_meta.loc[group, '{}_0'.format('pupil')], *popt)
+        else:
+            df_meta.loc[group, '{}_c'.format(m)] = df_meta.loc[group, m] - func(df_meta.loc[group, '{}_0'.format(m)], *popt)
+
         # correct per subject:
         df_meta.loc[group, '{}_c2'.format(m)] = np.repeat(np.NaN, df_meta.loc[group,:].shape[0])
         for subj in df['subj_idx'].unique():
@@ -1299,10 +1362,16 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
                 ind = df['subj_idx'] == subj
                 popt, pcov = curve_fit(func, df.loc[ind&~np.isnan(df['{}_b'.format(m)]),'{}_b'.format(m)], df.loc[ind&~np.isnan(df['{}_b'.format(m)]),'{}_change'.format(m)])
                 ind = (df_meta['subj_idx'] == subj) & group
-                df_meta.loc[ind,'{}_c2'.format(m)] = df_meta.loc[ind,m] - func(df_meta.loc[ind,'{}_0'.format(m)], *popt)
+                if m == 'slope':
+                    df_meta.loc[ind,'{}_c2'.format(m)] = df_meta.loc[ind,m] - func(df_meta.loc[ind,'{}_0'.format('pupil')], *popt)
+                else:
+                    df_meta.loc[ind,'{}_c2'.format(m)] = df_meta.loc[ind,m] - func(df_meta.loc[ind,'{}_0'.format(m)], *popt)
             except:
                 ind = (df_meta['subj_idx'] == subj) & group
-                df_meta.loc[ind,'{}_c2'.format(m)] = np.NaN
+                if m == 'slope':
+                    df_meta.loc[ind,'{}_c2'.format('pupil')] = np.NaN
+                else:    
+                    df_meta.loc[ind,'{}_c2'.format(m)] = np.NaN
 
         # plt.figure()
         # plt.scatter(df_meta.loc[group,'pupil'], df_meta.loc[group,'pupil_c'])
@@ -1591,9 +1660,9 @@ def process_meta_data(file_meta, stim_overview, cuff_type, subj, session, fig_di
     # df_meta['charge_ps_bin'] = df_meta.groupby(['subj_idx', 'session'])['charge_ps'].apply(pd.qcut, q=5, labels=False)
     df_meta['charge_bin'] = df_meta.groupby(['subj_idx', 'session'])['charge'].apply(pd.qcut, q=5, labels=False)
 
-    # plot
-    fig = plot_param_preprocessing(df_meta, popt, popts)
-    fig.savefig(os.path.join(fig_dir, 'preprocess', 'stimulation_params_{}_{}.png'.format(subj, session)))
+    # # plot
+    # fig = plot_param_preprocessing(df_meta, popt, popts)
+    # fig.savefig(os.path.join(fig_dir, 'preprocess', 'stimulation_params_{}_{}.png'.format(subj, session)))
 
     return df_meta
 
@@ -1869,6 +1938,14 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
     if df_eye.shape[0] == 0:
         return [pd.DataFrame([]) for _ in range(7)]
 
+    ### merge ###
+    intact_sessions = pd.read_csv('/media/external1/projects/vns_exploration/Rayan/sessions.csv')
+    intact_sessions = intact_sessions.loc[(intact_sessions['subj_idx']==subj)&(intact_sessions['session']==ses),:]
+    if intact_sessions.shape[0] > 0:
+        df_merge = df_eye.loc[:,['time', 'pupil_int_lp_frac']].merge(df_walk.loc[:,['time', 'distance']], how='inner', on=['time'])
+        df_merge.to_csv('/media/external1/projects/vns_exploration/Rayan/{}_{}.csv'.format(subj, ses))
+        df_meta.to_csv('/media/external1/projects/vns_exploration/Rayan/{}_{}_meta.csv'.format(subj, ses))
+
     # make epochs:
     fs = 50
     epochs_v = utils.make_epochs(df_walk, df_meta, locking='time', start=-60, dur=120, measure='distance', fs=fs)
@@ -1968,6 +2045,8 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
 
     ### GET EYE DATA ###
     df_eye = process_eye_data(file_frames, file_tdms, file_pupil, subj, ses, fig_dir, use_dlc_blinks=False, fs_resample=fs_resample)
+    print(df_eye['time'])
+    print('first pupil: {}'.format(df_eye['time'].iloc[0]))
 
     ### get zoom factor:
     zoom = utils.get_image_zoom_factor(file_tiff)
@@ -1982,7 +2061,8 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     # update time:
     if time.shape[0] > ops['nframes']:
         time = time.iloc[:ops['nframes'],:].reset_index(drop=True)
-    
+    print('first image: {}'.format(time['time'].iloc[0]))
+
     # get image motion information
     df_motion = pd.DataFrame({
                         'xoff': ops['xoff'] / px_per_micron,
@@ -2012,7 +2092,7 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     epochs_b = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='is_blink', fs=fs)
 
     # fluorescence:
-    f = np.load(os.path.join('/media/internal1/vns/', subj, ses, 'F.npy'))
+    f = np.load(os.path.join(imaging_dir, subj, ses, 'F.npy'))
     t = np.array(time['time'])
     if len(f) > len(t):
         f = f[:len(t)]

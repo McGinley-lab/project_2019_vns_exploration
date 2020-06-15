@@ -18,6 +18,7 @@ from IPython import embed as shell
 
 import vns_analyses
 from vns_analyses import analyse_exploration_session
+from tools_mcginley import utils
 
 # matplotlib.use("Qt4Agg")
 matplotlib.rcParams['pdf.fonttype'] = 42
@@ -67,9 +68,9 @@ for cuff_type in ['intact', 'single', 'double']:
             #     if (len(file_meta)==1)&(len(file_pupil)==1)&(len(file_tdms)==1):
             #         tasks.append((file_meta[0], file_pupil[0], file_tdms[0], fig_dir, subj, cuff_type, df_stim))
 
-preprocess = False
+preprocess = True
 if preprocess:
-    n_jobs = 64
+    n_jobs = 32
     res = Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(analyse_exploration_session)(*task) for task in tasks)
 
     # sort:
@@ -98,8 +99,17 @@ epochs_l = pd.read_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid') * 1
 epochs_x = pd.read_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='eye_x')
 epochs_y = pd.read_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='eye_y')
 epochs_b = pd.read_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
+epochs_s = epochs_p.diff(axis=1) * 50
 df_meta = pd.read_csv(os.path.join(data_dir, 'meta_data.csv'))
 print('finished loading data')
+
+shell()
+
+# preprocess slope:
+epochs_s = epochs_s.rolling(window=10, min_periods=1, axis=1).median()
+for i in range(epochs_s.shape[0]):
+    ind = ~np.isnan(epochs_s.iloc[i,:])
+    epochs_s.loc[i,ind] = utils._butter_lowpass_filter(epochs_s.loc[i,ind], highcut=0.5, fs=50, order=3)
 
 # round:
 df_meta['date'] = pd.to_datetime(df_meta.date, format='%Y/%m/%d', errors = 'coerce')
@@ -173,6 +183,12 @@ timewindows = {
             'velocity_0' : [(-0.1,0), (-10.1,-10)],
             'velocity_1' : [(9.9,10), (-0.1,0)],
 
+            'slope_-3' : [(-12, -9), (None, None)],      #
+            'slope_-2' : [(-9, -6), (None, None)],      #
+            'slope_-1' : [(-6, -3), (None, None)],      #
+            'slope_0' : [(-3, 0), (None, None)],          #
+            'slope_1' : [(0, 3), (None, None)],
+
             'pupil_-3' : [(-27.5, -22.5), (None, None)],  #
             'pupil_-2' : [(-20, -15), (None, None)],      #
             'pupil_-1' : [(-12.5, -7.5), (None, None)],   #
@@ -196,6 +212,7 @@ timewindows = {
 epochs = {
             'velocity' : epochs_v,
             'pupil' : epochs_p,
+            'slope' : epochs_s,
             'eyelid' : epochs_l,
             'blink' : epochs_b,
             # 'eyemovement' : epochs_xy,
@@ -205,6 +222,7 @@ ylims = {
             'velocity' : (-0.1, 0.8),
             'walk' : (0,0.75),
             'pupil' : (-5, 20),
+            'slope' : (-5, 20),
             'eyelid' : (-1, 3),
             'blink' : (0, 0.3),
             # 'eyemovement' : (0, 0.2),
@@ -213,7 +231,12 @@ ylims = {
 for key in timewindows.keys():
     x = epochs[key.split('_')[0]].columns
     window1, window2 = timewindows[key]
-    resp = epochs[key.split('_')[0]].loc[:,(x>=window1[0])&(x<=window1[1])].mean(axis=1)
+    if 'slope' in key:
+        # resp = epochs[key.split('_')[0]].loc[:,(x>=window1[0])&(x<=window1[1])].mean(axis=1)
+        resp = epochs[key.split('_')[0]].loc[:,(x>=window1[0])&(x<=window1[1])].max(axis=1)
+        # resp = epochs[key.split('_')[0]].loc[:,(x>=window1[0])&(x<=window1[1])].quantile(0.95, axis=1)
+    else:
+        resp = epochs[key.split('_')[0]].loc[:,(x>=window1[0])&(x<=window1[1])].mean(axis=1)
     if window2[0] == None: 
         df_meta[key] = resp
     else:
@@ -221,19 +244,22 @@ for key in timewindows.keys():
         df_meta[key] = resp-baseline    
     # if key == 'blink':
     #     df_meta['{}_resp_{}'.format(key, i)] = (epochs[key].loc[:,(x>=window[0])&(x<=window[1])].mean(axis=1) > 0).astype(int)
-
 df_meta['walk_-3'] = ((df_meta['velocity_-3'] < velocity_cutoff[0])|(df_meta['velocity_-3'] > velocity_cutoff[1])).astype(int)
 df_meta['walk_-2'] = ((df_meta['velocity_-2'] < velocity_cutoff[0])|(df_meta['velocity_-2'] > velocity_cutoff[1])).astype(int)
 df_meta['walk_-1'] = ((df_meta['velocity_-1'] < velocity_cutoff[0])|(df_meta['velocity_-1'] > velocity_cutoff[1])).astype(int)
 df_meta['walk_0'] = ((df_meta['velocity_0'] < velocity_cutoff[0])|(df_meta['velocity_0'] > velocity_cutoff[1])).astype(int)
 df_meta['walk_1'] = ((df_meta['velocity_1'] < velocity_cutoff[0])|(df_meta['velocity_1'] > velocity_cutoff[1])).astype(int)
 
+# add offset responses:
+x = np.array(epochs_p.columns, dtype=float)
+df_meta['offset'] = epochs_p.loc[:,(x>10)&(x<15)].mean(axis=1) - epochs_p.loc[:,(x>5)&(x<10)].mean(axis=1)
+
 # remove blink trials:
 # df_meta['blink'] = ((df_meta[['blink_-3', 'blink_-2', 'blink_-1']].mean(axis=1)>blink_cutoff) | (df_meta['blink_0']>blink_cutoff) | (df_meta['blink_1']>blink_cutoff) | np.isnan(df_meta['pupil_0']) | np.isnan(df_meta['pupil_1']) )
 df_meta['blink'] = ( (df_meta['blink_0']>blink_cutoff) | (df_meta['blink_1']>blink_cutoff) | np.isnan(df_meta['pupil_0']) | np.isnan(df_meta['pupil_1']) )
-
 epochs_v = epochs_v.loc[df_meta['blink']==0,:].reset_index(drop=True)
 epochs_p = epochs_p.loc[df_meta['blink']==0,:].reset_index(drop=True)
+epochs_s = epochs_s.loc[df_meta['blink']==0,:].reset_index(drop=True)
 epochs_l = epochs_l.loc[df_meta['blink']==0,:].reset_index(drop=True)
 epochs_x = epochs_x.loc[df_meta['blink']==0,:].reset_index(drop=True)
 epochs_y = epochs_y.loc[df_meta['blink']==0,:].reset_index(drop=True)
@@ -252,12 +278,31 @@ ind_g.loc[(df_meta['leak']<leak_cut_off)] = False
 ind_s = ((df_meta['velocity_1'] >= velocity_cutoff[0]) & (df_meta['velocity_1'] <= velocity_cutoff[1])) & ~np.isnan(df_meta['velocity_1'])
 ind_w = ((df_meta['velocity_1'] < velocity_cutoff[0]) | (df_meta['velocity_1'] > velocity_cutoff[1])) & ~np.isnan(df_meta['velocity_1'])
 
+# sample size:
+print('subjects: {}'.format(df_meta.loc[:,:].groupby(['subj_idx']).count().shape[0]))
+print('sessions: {}'.format(df_meta.loc[:,:].groupby(['subj_idx', 'session']).count().shape[0]))
+
+for cuff_type in ['intact', 'single', 'double']:
+    print()
+    print(cuff_type)
+    print('subjects: {}'.format(df_meta.loc[ind_g&(df_meta['cuff_type']==cuff_type),:].groupby(['subj_idx',]).count().shape[0]))
+    print('sessions: {}'.format(df_meta.loc[ind_g&(df_meta['cuff_type']==cuff_type),:].groupby(['subj_idx', 'session']).count().shape[0]))
+    print()
+    print('subjects: {}'.format(df_meta.loc[ind_u&(df_meta['cuff_type']==cuff_type),:].groupby(['subj_idx']).count().shape[0]))
+    print('sessions: {}'.format(df_meta.loc[ind_u&(df_meta['cuff_type']==cuff_type),:].groupby(['subj_idx', 'session']).count().shape[0]))
+
+
+
 # # remove blink trials:
 # df_meta['blink'] = ((df_meta[['blink_-3', 'blink_-2', 'blink_-1', 'blink_0']].mean(axis=1)>blink_cutoff) | (df_meta['blink_1']>blink_cutoff))
 # epochs_p = epochs_p.loc[df_meta['blink']==0,:].reset_index(drop=True)
 # df_meta = df_meta.loc[df_meta['blink']==0,:].reset_index(drop=True)
 
-shell()
+# # add pupil slopes:
+# x = np.array(epochs_p.columns, dtype=float)
+# # plt.plot(x, epochs_p.loc[ind_u,:].mean(axis=0)-epochs_p.loc[ind_u,:].mean(axis=0).mean())
+# # plt.plot(x, epochs_p.loc[ind_u,:].diff(axis=1).mean(axis=0)*50)
+# df_meta['pupil_s'] = np.array(epochs_p.diff(axis=1).loc[:,(x>0)&(x<5)].max(axis=1)) * 50
 
 mins = []
 medians = []
@@ -276,16 +321,18 @@ for group in [ind_u, ind_g]:
     df_meta, figs = vns_analyses.correct_scalars(df_meta, group=group, velocity_cutoff=velocity_cutoff, ind_clean_w=ind_clean_w)
     figs[0].savefig(os.path.join(fig_dir, 'pupil_reversion_to_mean1.pdf'))
     figs[1].savefig(os.path.join(fig_dir, 'pupil_reversion_to_mean2.pdf'))
-    figs[2].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean1.pdf'))
-    figs[3].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean2.pdf'))
-    figs[4].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean1.pdf'))
-    figs[5].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean2.pdf'))
-    figs[6].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean3.pdf'))
-    figs[7].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean4.pdf'))
-    figs[8].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean1.pdf'))
-    figs[9].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean2.pdf'))
-    figs[10].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean3.pdf'))
-    figs[11].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean4.pdf'))
+    figs[2].savefig(os.path.join(fig_dir, 'slope_reversion_to_mean1.pdf'))
+    figs[3].savefig(os.path.join(fig_dir, 'slope_reversion_to_mean2.pdf'))
+    figs[4].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean1.pdf'))
+    figs[5].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean2.pdf'))
+    figs[6].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean1.pdf'))
+    figs[7].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean2.pdf'))
+    figs[8].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean3.pdf'))
+    figs[9].savefig(os.path.join(fig_dir, 'velocity_reversion_to_mean4.pdf'))
+    figs[10].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean1.pdf'))
+    figs[11].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean2.pdf'))
+    figs[12].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean3.pdf'))
+    figs[13].savefig(os.path.join(fig_dir, 'walk_reversion_to_mean4.pdf'))
 
 # # plot 1 -- baseline dependence:
 # fig = plt.figure(figsize=(6,2))
@@ -303,7 +350,6 @@ for group in [ind_u, ind_g]:
 # plt.tight_layout()
 # sns.despine(trim=False, offset=3)
 # fig.savefig(os.path.join(fig_dir, 'pupil_state_dependence.pdf'))
-
 
 # subtract baselines:
 # -------------------
@@ -324,6 +370,7 @@ epochs_v = epochs_v - np.atleast_2d(epochs_v.loc[:,(x>=-0.1)&(x<=-0.0)].mean(axi
 epochs = {
             'velocity' : epochs_v,
             'pupil' : epochs_p,
+            'slope' : epochs_s,
             'eyelid' : epochs_l,
             'blink' : epochs_b,
             # 'eyemovement' : epochs_xy,
@@ -521,11 +568,139 @@ plt.tight_layout()
 sns.despine(trim=False, offset=3)
 fig.savefig(os.path.join(fig_dir, 'varation_across_session.pdf'))
 
+for measure in ['pupil_c', 'eyelid_c', 'velocity', 'walk',]:
+    for grounded in [ind_u, ind_g]:
+        for cuff_type in ['intact', 'single', 'double']:
+            
+            ind = grounded & (df_meta['cuff_type'] == cuff_type)
+            ind = ind & ~np.isnan(df_meta[measure])
+
+            if ('velocity' in measure):
+                ind = ind & ind_w & ind_clean_w
+            if ('walk' in measure):
+                ind = ind & ind_clean_w
+
+            print()
+            print(measure)
+            if (grounded == ind_u).mean()==1:
+                print('ungrounded')
+            else:
+                print('grounded')
+            print(cuff_type)
+            vns_analyses.fit_log_logistic(df_meta.loc[ind, :], measure)
+
+
+popt = [0.195, 1.589, 32.132, 4.851, 1000]
+# popt = [0.195, 1.589, 32.132, 4.851, 1.059]
+x1 = np.round(np.arange(0.01,0.725,0.005),3)
+x2 = np.round(np.arange(0,21,1),3)
+XX1, XX2 = np.meshgrid(x1, x2)
+df_surf2 = pd.DataFrame({'charge': XX1.ravel(),
+                        'rate': XX2.ravel()})
+df_surf2['ne'] = vns_analyses.log_logistic_3d(np.array(df_surf2[['charge', 'rate']]), *popt)
+df_surf2 = df_surf2.loc[df_surf2['charge']>0,:]
+d = df_surf2.loc[df_surf2['rate']==20,:]
+plt.plot(d['charge'],d['ne'])
+# d = df_surf2.groupby('charge').mean().reset_index()
+plt.plot(d['charge'],d['ne'])
+plt.axhline(popt[2]/2)
+plt.axvline(popt[0], ls='--')
+# plt.show()
+
+
+
+
+ind1 = ind_u & (df_meta['cuff_type'] == 'double')
+ind1 = ind1 & ~np.isnan(df_meta['pupil_c'])
+ind2 = ind_g & (df_meta['cuff_type'] == 'double')
+ind2 = ind2 & ~np.isnan(df_meta['pupil_c'])
+
+imp.reload(vns_analyses)
+nboot = 5000
+n_jobs = 48
+res1 = np.array(Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(vns_analyses.fit_log_logistic)(df_meta.loc[ind1,:], 'pupil_c', resample=True) for _ in range(nboot)))
+res2 = np.array(Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(vns_analyses.fit_log_logistic)(df_meta.loc[ind2,:], 'pupil_c', resample=True) for _ in range(nboot)))
+
+for m, i in zip(['charge', 'rate'], [0,3]):
+    
+    m1 = round(res1[:,i].mean(),3)
+    m2 = round(res2[:,i].mean(),3)
+    s1 = round(res1[:,i].std(),3)
+    s2 = round(res2[:,i].std(),3)
+
+    p_value = round((res1[:,i] < res2[:,i]).mean(),3)
+    p_value = min((p_value, 1-p_value))
+
+    fig = plt.figure(figsize=(2,2))
+    ax = fig.add_subplot(111)
+    sns.distplot(np.array(res1)[:,i], hist=False, color='r') 
+    sns.distplot(np.array(res2)[:,i], hist=False, color='g')
+    plt.title('m1 = {}, s1 = {}\nm2 = {}, s2 = {}\np = {}'.format(m1, s1, m2, s2, p_value))
+    plt.xlabel(m)
+    plt.ylabel('KDE')
+    sns.despine(trim=False, offset=3)
+    plt.tight_layout()
+    fig.savefig(os.path.join(fig_dir, 'halfmax_{}_{}.pdf'.format(m, 3)))
+
+shell()
+
+
+for comparison in [2,3]:
+
+    imp.reload(vns_analyses)
+    nboot = 5000
+    n_jobs = 48
+
+    if comparison == 0:
+        ind = ind_u & (df_meta['cuff_type'] == 'intact') & ind_clean_w & ~np.isnan(df_meta['pupil_c']) & ~np.isnan(df_meta['walk_c'])
+        res1 = np.array(Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(vns_analyses.fit_log_logistic)(df_meta.loc[ind,:], 'pupil_c', resample=True) for _ in range(nboot)))
+        res2 = np.array(Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(vns_analyses.fit_log_logistic)(df_meta.loc[ind,:], 'walk_c', resample=True) for _ in range(nboot)))
+    if comparison == 1:
+        ind = ind_u & (df_meta['cuff_type'] == 'intact') & ind_clean_w & ~np.isnan(df_meta['pupil_c']) & ~np.isnan(df_meta['walk_c']) & ind_w
+        res1 = np.array(Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(vns_analyses.fit_log_logistic)(df_meta.loc[ind,:], 'pupil_c', resample=True) for _ in range(nboot)))
+        res2 = np.array(Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(vns_analyses.fit_log_logistic)(df_meta.loc[ind,:], 'velocity_c', resample=True) for _ in range(nboot)))
+    if comparison == 2:
+        ind = ind_u & (df_meta['cuff_type'] == 'intact') & ~np.isnan(df_meta['pupil_c']) & ~np.isnan(df_meta['eyelid_c'])
+        globals().update(locals())
+        res1 = np.array(Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(vns_analyses.fit_log_logistic)(df_meta.loc[ind,:], 'pupil_c', resample=True) for _ in range(nboot)))
+        globals().update(locals())
+        res2 = np.array(Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(vns_analyses.fit_log_logistic)(df_meta.loc[ind,:], 'eyelid_c', resample=True) for _ in range(nboot)))
+    if comparison == 3:
+        ind1 = ind_u & (df_meta['cuff_type'] == 'intact') & ~np.isnan(df_meta['pupil_c'])
+        ind2 = ind_u & (df_meta['cuff_type'] == 'double') & ~np.isnan(df_meta['pupil_c']) 
+        globals().update(locals())
+        res1 = np.array(Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(vns_analyses.fit_log_logistic)(df_meta.loc[ind1,:], 'pupil_c', resample=True) for _ in range(nboot)))
+        globals().update(locals())
+        res2 = np.array(Parallel(n_jobs=n_jobs, verbose=1, backend='loky')(delayed(vns_analyses.fit_log_logistic)(df_meta.loc[ind2,:], 'pupil_c', resample=True) for _ in range(nboot)))
+
+    for m, i in zip(['charge', 'rate'], [0,3]):
+        
+        m1 = round(res1[:,i].mean(),3)
+        m2 = round(res2[:,i].mean(),3)
+        s1 = round(res1[:,i].std(),3)
+        s2 = round(res2[:,i].std(),3)
+
+        p_value = round((res1[:,i] < res2[:,i]).mean(),3)
+        p_value = min((p_value, 1-p_value))
+
+        fig = plt.figure(figsize=(2,2))
+        ax = fig.add_subplot(111)
+        sns.distplot(np.array(res1)[:,i], hist=False, color='r') 
+        sns.distplot(np.array(res2)[:,i], hist=False, color='g')
+        plt.title('m1 = {}, s1 = {}\nm2 = {}, s2 = {}\np = {}'.format(m1, s1, m2, s2, p_value))
+        plt.xlabel(m)
+        plt.ylabel('KDE')
+        sns.despine(trim=False, offset=3)
+        plt.tight_layout()
+        fig.savefig(os.path.join(fig_dir, 'halfmax_{}_{}.pdf'.format(m, comparison)))
+
+shell()
+
 # time courses:
 # -------------
 imp.reload(vns_analyses)
-for measure in ['pupil', 'velocity', 'walk', 'eyelid',]:
-# for measure in ['pupil',]:
+# for measure in ['pupil', 'slope', 'velocity', 'walk', 'eyelid',]:
+for measure in ['offset',]:
     for cuff_type in ['intact', 'single', 'double']:
     # for cuff_type in ['intact']:
         cuff_ind = np.array(df_meta['cuff_type'] == cuff_type)
@@ -539,23 +714,50 @@ for measure in ['pupil', 'velocity', 'walk', 'eyelid',]:
             if ('walk' in measure):
                 ind = ind & ind_clean_w
             ind = ind & cuff_ind
-            ylim = ylims[measure]
+            try:
+                ylim = ylims[measure]
+            except:
+                ylim = ylims['pupil']
             if (measure == 'blink'):
                 ylim = (ylim[0], ylim[1]/3)
             if (measure == 'pupil') & (title=='g'):
                 ylim = (ylim[0], ylim[1]*2)
             
-            if not measure == 'walk':
+            if not ((measure == 'walk') or (measure == 'offset')):
                 x = np.array(epochs[measure].columns, dtype=float)
                 fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], epochs[measure].loc[:,(x>=-20)&(x<=40)].loc[ind,::10], timewindows=timewindows, ylabel=measure+'_1', ylim=ylim)
                 fig.savefig(os.path.join(fig_dir, measure, title, 'timecourses_{}_{}_{}.pdf'.format(title, cuff_type, measure)))
 
-            for measure_ext in ['', '_c', '_c2',]:
-            # for measure_ext in ['_c3']:
-                
-                if measure_ext == '_c3':
-                    ylim = (0,3)
+                # # filter:
+                # epochs_sf3 = epochs_s.copy().rolling(window=10, min_periods=1, axis=1).median()
+                # epochs_sf2 = epochs_sf3.copy()
+                # epochs_sf1 = epochs_sf3.copy()
+                # for i in range(epochs_sf3.shape[0]):
+                #     epochs_sf3.iloc[i,1:] = utils._butter_lowpass_filter(epochs_sf3.iloc[i,1:], highcut=2, fs=50, order=3)
+                #     epochs_sf2.iloc[i,1:] = utils._butter_lowpass_filter(epochs_sf2.iloc[i,1:], highcut=1, fs=50, order=3)
+                #     epochs_sf1.iloc[i,1:] = utils._butter_lowpass_filter(epochs_sf1.iloc[i,1:], highcut=0.5, fs=50, order=3)
 
+                # for e, t in zip([epochs_s, epochs_sf3, epochs_sf2, epochs_sf1], ['default', 'f3', 'f2', 'f1']):
+
+                #     fig = vns_analyses.plot_timecourses(df_meta.loc[ind, :], e.loc[:,(x>=-2)&(x<=10)].loc[ind,::10], timewindows=timewindows, ylabel=measure+'_1', ylim=(-1,10))
+                #     fig.savefig(os.path.join(fig_dir, measure, title, 'timecourses_{}_{}_{}_{}.pdf'.format(title, cuff_type, measure, t)))
+
+
+                # fig = plt.figure()
+                # for i in range(10):
+                #     plt.plot(epochs_sf1.iloc[i,1:])
+
+                # fig = plt.figure()
+                # for i in range(10):
+                #     plt.plot(epochs_p.iloc[i,1:])
+            
+            if measure == 'offset':
+                measure_exts = ['',]
+            else:
+                measure_exts = ['', '_c', '_c2']
+
+            for measure_ext in measure_exts:
+                
                 fig = vns_analyses.plot_scalars(df_meta.loc[ind &  ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
                 fig.savefig(os.path.join(fig_dir, measure, title, 'scalars_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
                 

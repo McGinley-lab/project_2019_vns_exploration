@@ -84,8 +84,15 @@ epochs_l = pd.read_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid') * 1
 epochs_x = pd.read_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='eye_x')
 epochs_y = pd.read_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='eye_y')
 epochs_b = pd.read_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
+epochs_s = epochs_p.diff(axis=1) * 50
 df_meta = pd.read_csv(os.path.join(data_dir, 'meta_data.csv'))
 print('finished loading data')
+
+# sample size:
+print('subjects: {}'.format(df_meta.loc[:,:].groupby(['subj_idx']).count().shape[0]))
+print('sessions: {}'.format(df_meta.loc[:,:].groupby(['subj_idx', 'session']).count().shape[0]))
+
+shell()
 
 # cutoffs:
 velocity_cutoff = (-0.005, 0.005)
@@ -116,6 +123,12 @@ timewindows = {
             'pupil_0' : [(-5, 0), (None, None)],          #
             'pupil_1' : [(2.5, 7.5), (None, None)],
 
+            'slope_-3' : [(-25, -20), (None, None)],      #
+            'slope_-2' : [(-20, -15), (None, None)],      #
+            'slope_-1' : [(-15, -10), (None, None)],      #
+            'slope_0' : [(-5, 0), (None, None)],          #
+            'slope_1' : [(0, 5), (None, None)],
+
             'blink_-3' : [(-27.5, -22.5), (None, None)],  #
             'blink_-2' : [(-20, -15), (None, None)],      #
             'blink_-1' : [(-12.5, -7.5), (None, None)],   #
@@ -133,6 +146,7 @@ timewindows = {
 epochs = {
             'velocity' : epochs_v,
             'pupil' : epochs_p,
+            'slope' : epochs_s,
             'eyelid' : epochs_l,
             'blink' : epochs_b,
             # 'eyemovement' : epochs_xy,
@@ -142,6 +156,7 @@ ylims = {
             'velocity' : (-0.1, 0.5),
             'walk' : (0,1),
             'pupil' : (-5, 30),
+            'slope' : (-5, 30),
             'eyelid' : (-1, 3),
             'blink' : (0, 0.3),
             # 'eyemovement' : (0, 0.2),
@@ -150,7 +165,12 @@ ylims = {
 for key in timewindows.keys():
     x = epochs[key.split('_')[0]].columns
     window1, window2 = timewindows[key]
-    resp = epochs[key.split('_')[0]].loc[:,(x>=window1[0])&(x<=window1[1])].mean(axis=1)
+    if 'slope' in key:
+        # resp = epochs[key.split('_')[0]].loc[:,(x>=window1[0])&(x<=window1[1])].mean(axis=1)
+        # resp = epochs[key.split('_')[0]].loc[:,(x>=window1[0])&(x<=window1[1])].max(axis=1)
+        resp = epochs[key.split('_')[0]].loc[:,(x>=window1[0])&(x<=window1[1])].quantile(0.95, axis=1)
+    else:
+        resp = epochs[key.split('_')[0]].loc[:,(x>=window1[0])&(x<=window1[1])].mean(axis=1)
     if window2[0] == None: 
         baseline = 0
     else:
@@ -163,6 +183,7 @@ for key in timewindows.keys():
 # df_meta['blink'] = ((df_meta[['blink_-3', 'blink_-2', 'blink_-1']].mean(axis=1)>blink_cutoff) | (df_meta['blink_0']>blink_cutoff) | (df_meta['blink_1']>blink_cutoff) | np.isnan(df_meta['pupil_0']) | np.isnan(df_meta['pupil_1']) )
 df_meta['blink'] = ( (df_meta['blink_0']>blink_cutoff) | (df_meta['blink_1']>blink_cutoff) | np.isnan(df_meta['pupil_0']) | np.isnan(df_meta['pupil_1']) )
 epochs_p = epochs_p.loc[df_meta['blink']==0,:].reset_index(drop=True)
+epochs_s = epochs_p.loc[df_meta['blink']==0,:].reset_index(drop=True)
 df_meta = df_meta.loc[df_meta['blink']==0,:].reset_index(drop=True)
 
 # indices:
@@ -174,8 +195,10 @@ all_trials = np.ones(df_meta.shape[0], dtype=bool)
 df_meta, figs = vns_analyses.correct_scalars(df_meta, group=all_trials, velocity_cutoff=velocity_cutoff, ind_clean_w=ind_clean_w)
 figs[0].savefig(os.path.join(fig_dir, 'pupil_reversion_to_mean1.pdf'))
 figs[1].savefig(os.path.join(fig_dir, 'pupil_reversion_to_mean2.pdf'))
-figs[2].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean1.pdf'))
-figs[3].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean2.pdf'))
+figs[2].savefig(os.path.join(fig_dir, 'slope_reversion_to_mean1.pdf'))
+figs[3].savefig(os.path.join(fig_dir, 'slope_reversion_to_mean2.pdf'))
+figs[4].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean1.pdf'))
+figs[5].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean2.pdf'))
 
 # plot 3 -- baseline dependence:
 # import statsmodels.formula.api as smf
@@ -195,11 +218,11 @@ fig = vns_analyses.plot_pupil_responses(df_meta, epochs_p.loc[:, ::10], bins=bin
 fig.savefig(os.path.join(fig_dir, 'pupil_timecourses.pdf'))
 
 # plot 1 -- baseline dependence:
-fig = plt.figure(figsize=(6,2))
-for i, measure in enumerate(['pupil', 'pupil_c', 'pupil_c2']):
-    means = df_meta.groupby('bins_pupil')[['pupil_c2', 'pupil_c', 'pupil', 'pupil_0']].mean()
-    sems = df_meta.groupby('bins_pupil')[['pupil_c2', 'pupil_c', 'pupil', 'pupil_0']].sem()
-    ax = fig.add_subplot(1,3,i+1)
+fig = plt.figure(figsize=(8,2))
+for i, measure in enumerate(['pupil', 'pupil_c', 'pupil_c2', 'slope_c']):
+    means = df_meta.groupby('bins_pupil')[['pupil_c2', 'pupil_c', 'pupil', 'pupil_0', 'slope_c']].mean()
+    sems = df_meta.groupby('bins_pupil')[['pupil_c2', 'pupil_c', 'pupil', 'pupil_0', 'slope_c']].sem()
+    ax = fig.add_subplot(1,4,i+1)
     plt.errorbar(means['pupil_0'], means[measure], yerr=sems[measure], color='k', elinewidth=0.5, mfc='lightgrey', fmt='o', ecolor='lightgray', capsize=0)
     x = np.linspace(min(means['pupil_0']),max(means['pupil_0']),100)
 
@@ -215,255 +238,20 @@ for i, measure in enumerate(['pupil', 'pupil_c', 'pupil_c2']):
     # plt.plot(x, func(x,*popt), '-', color='r')
     
     plt.xlabel('Baseline pupil')
-    plt.ylabel('Pupil response')
+    plt.ylabel(measure)
     plt.title('r = {}, p = {}'.format(round(r,3), round(p,3)))
 plt.tight_layout()
 sns.despine(trim=False, offset=3)
 fig.savefig(os.path.join(fig_dir, 'pupil_state_dependence.pdf'))
 
-shell()
-
-
 from sklearn import feature_selection
+df_meta['ones'] = 1
 df_meta['pupil_0_2'] = df_meta['pupil_0']**2
 df_meta['pupil_0_3'] = df_meta['pupil_0']**3
 df_meta['pupil_0_4'] = df_meta['pupil_0']**4
 df_meta['pupil_0_5'] = df_meta['pupil_0']**5
 feature_selection.f_regression(X=df_meta[['pupil_0', 'pupil_0_2', 'pupil_0_3', 'pupil_0_4', 'pupil_0_5']], y=df_meta['pupil_c'])
+feature_selection.f_regression(X=df_meta[['pupil_0', 'pupil_0_2', 'pupil_0_3', 'pupil_0_4', 'pupil_0_5']], y=df_meta['pupil_1s'])
 
 
 
-
-# sf = 500
-# win = 15 * sf
-# x = epochs_p.columns
-# ind = (x>-60)&(x<0)
-# freqs = []
-# psds = []
-# for i in range(epochs_p.shape[0]):
-#     print(i)
-#     data = np.array(epochs_p.loc[i,ind])
-#     data = data - data.mean()
-#     from scipy import signal
-#     freq, psd = signal.welch(data, sf, nperseg=win)
-#     # from scipy import fftpack
-#     # X = fftpack.fft(data)
-#     # freqs = fftpack.fftfreq(len(data)) * sf
-#     freqs.append(freq)
-#     psds.append(psd)
-# df_psd = pd.DataFrame(psds, columns=freqs[0])
-# means = df_psd.groupby([df_meta['subj_idx'], df_meta['session']]).mean()
-
-# # plot:
-# plt.figure()
-# plt.axvspan(0.9, 1.4, color='grey', alpha=0.1)
-# for i in range(means.shape[0]):
-#     plt.plot(means.iloc[i], color='k', alpha=0.2)
-# plt.plot(df_psd.mean(axis=0), color='red')
-# # plt.xscale('log')
-# plt.yscale('log')
-# plt.xlim(0,50)
-
-# # compute reversion to mean:
-# func = vns_analyses.linear
-# measure = 'pupil'
-# popts = []
-# for (subj, ses), d in df.groupby(['subj_idx', 'session']):
-#     print((subj, ses))
-#     popt, pcov = curve_fit(func, d['{}_b'.format(measure)], d['{}_change'.format(measure)],)
-#     popts.append(popt)
-# popts = np.vstack(popts)
-
-# plt.figure()
-# x = np.linspace(0,1,100)
-# for p in popts:
-#     plt.plot(x, func(x, *p))
-
-
-# # compute power:
-# from scipy.integrate import simps
-# low = 0.1
-# high = 0.5
-# f = means.columns
-# idx_band = np.logical_and(f >= low, f <= high)
-# freq_res = np.diff(f)[0]
-# bp = simps(means.loc[:,idx_band], dx=freq_res)
-
-# r0 = []
-# r1 = []
-# for low in np.linspace(0.1, 10, 100):
-#     high = low + 0.5
-#     f = means.columns
-#     idx_band = np.logical_and(f >= low, f <= high)
-#     freq_res = np.diff(f)[0]
-#     bp = simps(means.loc[:,idx_band], dx=freq_res)
-#     r0.append(sp.stats.pearsonr(bp, popts[:,0])[0])
-#     r1.append(sp.stats.pearsonr(bp, popts[:,1])[0])
-
-# plt.figure()
-# # plt.plot(np.linspace(0.1, 10, 100), r0)
-# plt.plot(np.linspace(0.1, 10, 100), r1)
-
-
-
-# low = 0.8
-# high = low + 0.5
-# f = means.columns
-# idx_band = np.logical_and(f >= low, f <= high)
-# freq_res = np.diff(f)[0]
-# bp = simps(means.loc[:,idx_band], dx=freq_res)
-# plt.figure()
-# plt.scatter(bp, popts[:,1])
-
-
-
-
-
-# epochs_p['mean'] = epochs_p.mean(axis=1)
-# epochs_p['std'] = epochs_p.std(axis=1)
-# averages = epochs_p.groupby([df_meta['subj_idx'], df_meta['session']]).mean()
-
-# fig = plt.figure(figsize=(6,3))
-# ax = fig.add_subplot(1,3,1)
-# x = np.array(averages['mean'])
-# y = popts[:,1]
-# ax.scatter(x,y)
-# # popt_s, pcov = curve_fit(vns_analyses.linear, x, y,)
-# # ax.plot(np.linspace(0, max(x), 100), vns_analyses.linear(np.linspace(0, max(x), 100), *popt_s), color='k', ls='-', zorder=10)
-# ax.set_xlabel('Pupil (mean)')
-# ax.set_ylabel('Regression to mean')
-# ax = fig.add_subplot(1,3,2)
-# x = np.array(averages['std'])
-# y = popts[:,1]
-# ax.scatter(x,y)
-# # popt_s, pcov = curve_fit(vns_analyses.linear, x, y,)
-# # ax.plot(np.linspace(0, max(x), 100), vns_analyses.linear(np.linspace(0, max(x), 100), *popt_s), color='k', ls='-', zorder=10)
-# ax.set_xlabel('Pupil (std)')
-# ax.set_ylabel('Regression to mean')
-# sns.despine(trim=False, offset=3)
-# plt.tight_layout()
-
-# shell()
-
-
-
-
-
-# # Plot the power spectrum
-# plt.figure(figsize=(8, 4))
-# for f, p in zip(group_freq, group_power):
-#     try:
-#         plt.plot(f, p, color='grey')
-#     except:
-#         pass
-# plt.plot(group_freq.mean(axis=0), np.nanmean(group_power, axis=0), color='red')
-# plt.xscale('log')
-# plt.yscale('log')
-# # plt.xlim(0,50)
-
-
-
-
-
-# r0 = []
-# r1 = []
-
-# for low in np.linspace(0.1, 10, 100):
-
-#     high = low + 0.5
-#     bp = []
-#     for f,p in zip(group_freq, group_power):
-
-#         # Frequency resolution
-#         freq_res = f[1] - f[0]
-
-#         # Find closest indices of band in frequency vector
-#         idx_band = np.logical_and(f >= low, f <= high)
-
-#         # Integral approximation of the spectrum using Simpson's rule.
-#         bp.append(simps(p[idx_band], dx=freq_res))
-
-
-
-# plt.figure()
-# plt.plot(np.linspace(0.1, 10, 100), r0)
-
-# plt.figure()
-# plt.plot(np.linspace(0.1, 10, 100), r1)
-
-
-# plt.figure()
-# plt.scatter(bp, popts[:,0])
-
-# plt.figure()
-# plt.scatter(bp, popts[:,1])
-
-
-
-
-
-
-
-
-
-
-# plt.plot(freqs, psd, color='k', lw=2)
-
-# plt.xlabel('Frequency (Hz)')
-# plt.ylabel('Power spectral density (V^2 / Hz)')
-# # plt.ylim([0, psd.max() * 1.1])
-# plt.title("Welch's periodogram")
-# # plt.xlim([0, freqs.max()])
-# plt.yscale('log')
-# sns.despine()
-
-
-
-
-
-
-# plt.plot(np.vstack(group_freq).mean(axis=0), np.vstack(group_power).mean(axis=0))
-# plt.yscale('log')
-# plt.xlim(0,50)
-
-
-
-# popts = np.vstack(popts)
-
-# fig = plt.figure()
-# ax = fig.add_subplot(111)
-# for popt in popts:
-#     x = np.linspace(0,1,100)
-#     ax.plot(x, func(x, *popt), color='k', alpha=0.2)
-
-# plt.figure()
-# plt.hist(popts[:,0], bins=10)
-
-# plt.figure()
-# plt.hist(popts[:,1], bins=10)
-
-
-
-
-
-
-# # for Matt:
-# means = df.groupby(['subj_idx', 'session', 'bins']).mean().reset_index()
-# means.to_csv(os.path.join(fig_dir, 'scalars_for_regression_to_mean.csv'))
-
-# # individual sesisons:
-# for subj, dd in df.groupby(['subj_idx',]):
-#     means = dd.groupby('bins').mean()
-#     sems = dd.groupby('bins').sem()
-#     model = ols("pupil_change ~ 1 + pupil_b", data=means).fit()
-#     df_pred = pd.DataFrame(np.linspace(0,1,100), columns=['pupil_b'])
-#     predictions = model.predict(df_pred)
-#     fig = plt.figure(figsize=(2.5,2.5))
-#     plt.errorbar(means['pupil_b'], means['pupil']-means['pupil_b'], yerr=sems['pupil'], color='k', elinewidth=0.5, mfc='lightgrey', fmt='o', ecolor='lightgray', capsize=0)
-#     plt.axhline(0, ls='--')
-#     # plt.plot(np.linspace(0,1,100), np.linspace(0,1,100), '--')
-#     plt.plot(np.linspace(0,1,100), predictions, '-', color='r')
-#     plt.xlabel('Pupil size\n(t-10)')
-#     plt.ylabel('Pupil change\n(t-10 --> t)')
-#     plt.tight_layout()
-#     sns.despine(trim=False, offset=3)
