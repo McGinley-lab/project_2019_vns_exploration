@@ -92,8 +92,6 @@ print('finished loading data')
 print('subjects: {}'.format(df_meta.loc[:,:].groupby(['subj_idx']).count().shape[0]))
 print('sessions: {}'.format(df_meta.loc[:,:].groupby(['subj_idx', 'session']).count().shape[0]))
 
-shell()
-
 # cutoffs:
 velocity_cutoff = (-0.005, 0.005)
 blink_cutoff = 0.1
@@ -217,6 +215,11 @@ bins = np.array([-10,0.2,0.3,0.4,0.5,0.6,0.7,0.8,10])
 fig = vns_analyses.plot_pupil_responses(df_meta, epochs_p.loc[:, ::10], bins=bins, ylabel='Pupil response\n(% max)', ylim=(0, 1.2))
 fig.savefig(os.path.join(fig_dir, 'pupil_timecourses.pdf'))
 
+
+
+
+# df_meta['bins_pupil'] = df_meta.groupby(['subj_idx', 'session'])['pupil_0'].apply(make_bins, [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]) 
+
 # plot 1 -- baseline dependence:
 fig = plt.figure(figsize=(8,2))
 for i, measure in enumerate(['pupil', 'pupil_c', 'pupil_c2', 'slope_c']):
@@ -230,7 +233,7 @@ for i, measure in enumerate(['pupil', 'pupil_c', 'pupil_c2', 'slope_c']):
     popt,pcov = curve_fit(func, means['pupil_0'],means[measure],)
     
     predictions = func(df_meta['pupil_0'], *popt)
-    r, p = sp.stats.pearsonr(predictions, df_meta['pupil_c'])
+    r, p = sp.stats.pearsonr(predictions, df_meta[measure])
     plt.plot(x, func(x,*popt), '--', color='r')
     
     # func = vns_analyses.gaus
@@ -250,8 +253,19 @@ df_meta['pupil_0_2'] = df_meta['pupil_0']**2
 df_meta['pupil_0_3'] = df_meta['pupil_0']**3
 df_meta['pupil_0_4'] = df_meta['pupil_0']**4
 df_meta['pupil_0_5'] = df_meta['pupil_0']**5
-feature_selection.f_regression(X=df_meta[['pupil_0', 'pupil_0_2', 'pupil_0_3', 'pupil_0_4', 'pupil_0_5']], y=df_meta['pupil_c'])
-feature_selection.f_regression(X=df_meta[['pupil_0', 'pupil_0_2', 'pupil_0_3', 'pupil_0_4', 'pupil_0_5']], y=df_meta['pupil_1s'])
+feature_selection.f_regression(X=df_meta[['pupil_0', 'pupil_0_2', 'pupil_0_3', 'pupil_0_4', 'pupil_0_5']], y=df_meta['pupil_c2'])
+# feature_selection.f_regression(X=df_meta[['pupil_0', 'pupil_0_2', 'pupil_0_3', 'pupil_0_4', 'pupil_0_5']], y=df_meta['pupil_1s'])
 
-
+fig = plt.figure(figsize=(12,8))
+plt_nr = 1
+for (subj, ses), df in df_meta.groupby(['subj_idx', 'session']):
+    ax = fig.add_subplot(4,6,plt_nr)
+    plt.hist(df['pupil_0'], bins=15)
+    plt.title('{} ses {}'.format(subj, ses))
+    plt_nr += 1
+plt.hist(df_meta['pupil_0'], color='r', bins=15)
+plt.title('group')
+sns.despine(trim=False, offset=3)
+plt.tight_layout()
+fig.savefig(os.path.join(fig_dir, 'baseline_histograms.pdf'))
 

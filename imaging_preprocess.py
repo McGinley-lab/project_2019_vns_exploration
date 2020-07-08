@@ -18,6 +18,11 @@ subjects = {
     'C1773': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'],
 }
 
+subjects = {
+    'D1977': ['3', '4'],
+    'D2007': ['1', '2'],
+}
+
 # subjects = {
 #     'D1574': ['1', '2', '3', '4', '5', '6', '7', '8', '9'],
 #     'D1640': ['1', '2', '3', '4'], # all bad
@@ -27,7 +32,7 @@ subjects = {
 # }
 
 raw_dir = '/media/external4/2p_imaging/vns/'
-temp_dir = '/media/internal2/vns/'
+temp_dir = '/media/internal1/vns/'
 
 # default zoom:
 default_zoom = 4
@@ -43,6 +48,12 @@ errors = []
 for subj in subjects.keys():
     for session in subjects[subj]:
         
+        if subj in ['D1977']:
+            nchannels = 1
+        else:
+            nchannels = 2
+
+
         print()
         print(subj)
         print(session)
@@ -86,13 +97,13 @@ for subj in subjects.keys():
                 # main settings:
                 'data_path': [temp_directory], 
                 'save_path0': temp_directory, 
-                'nchannels' : 2,
+                'nchannels' : nchannels,
                 'fs' : 15,
                 'keep_movie_raw' : True,
                 'frames_include' : -1,
                 
                 # motion correction:
-                'do_registration': 2,
+                'do_registration': 1,
                 'two_step_registration': True,
                 'nonrigid': False,
                 'nimg_init': 2500,

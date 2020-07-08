@@ -68,7 +68,7 @@ def sample_frames(ops, ix, reg_file, crop=True):
 
 raw_dir = '/media/external4/2p_imaging/vns/'
 # temp_dir = '/media/internal1/vns/'
-temp_dir = '/media/internal2/vns/'
+temp_dir = '/media/internal1/vns/'
 
 run_stats = True
 
@@ -78,6 +78,13 @@ subjects = {
     'C1772': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10'],
     'C1773': ['1', '2', '3', '4', '5', '6', '7', '8', '9', '10', '11'],
 }
+
+
+subjects = {
+    'D1977': ['3', '4'],
+    'D2007': ['1', '2'],
+}
+
 for subj in subjects.keys():
     for session in subjects[subj]:
         

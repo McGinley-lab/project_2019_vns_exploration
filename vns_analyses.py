@@ -175,7 +175,7 @@ def fig_image_quality(ref_img, mean_img, motion, calcium, eye, walk, zoom, subje
 
     plt_nr = 5
 
-    for measure, df, title in zip(['F', 'pupil_int_lp_frac', 'eyelid_int_lp_frac', 'velocity', 'distance'], 
+    for measure, df, title in zip(['F', 'pupil', 'eyelid', 'velocity', 'distance'], 
                             [calcium, eye, eye, walk, walk], 
                             ['Calcium', 'Pupil', 'Eyelid', 'Velocity', 'Distance']):
 
@@ -200,7 +200,7 @@ def fig_image_quality(ref_img, mean_img, motion, calcium, eye, walk, zoom, subje
             epochs = utils.make_epochs(df=df, df_meta=pulses, locking='time', start=-10, dur=60, measure=measure, fs=fs,)
                                     # baseline=True, b_start=-5, b_dur=5)
         else:
-            epochs = utils.make_epochs(df=df, df_meta=pulses, locking='time2', start=-10, dur=60, measure=measure, fs=fs,)
+            epochs = utils.make_epochs(df=df, df_meta=pulses, locking='time', start=-10, dur=60, measure=measure, fs=fs,)
                                     # baseline=True, b_start=-5, b_dur=5)
         x = np.array(epochs.columns)
 
@@ -913,7 +913,17 @@ def plot_scalars3(df_meta, measure, ylabel='Pupil response', ylim=(None, None)):
             
             x = np.array(means.loc[means[bin_by[1]]==m2, x_measure])
             y = np.array(means.loc[means[bin_by[1]]==m2, measure])
-            colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
+
+            if ('pupil' in measure) or ('offset' in measure):
+                colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
+            elif 'calcium' in measure:
+                colors = sns.color_palette("summer_r", len(means[bin_by[1]].unique()))
+            elif ('velocity' in measure) or ('walk' in measure):
+                colors = sns.color_palette("YlGnBu", len(means[bin_by[1]].unique()))
+            else:
+                colors = sns.color_palette("BuPu", len(means[bin_by[1]].unique()))
+
+
             for j in range(len(x)):
                 plt.plot(x[j],y[j], 'o', mfc='lightgrey', color=colors[i], zorder=1)
             ax.errorbar(x=x, y=y, yerr=np.array(sems.loc[sems[bin_by[1]]==m2, measure]), elinewidth=0.5, markeredgewidth=0.5, 
@@ -1288,6 +1298,11 @@ def load_stim_parameters(file_meta):
         
     return df_meta, frames, pulses, stim_si
 
+def make_bins(x, splits=[0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]):
+    edges = np.concatenate(([-1e6], x.quantile(splits), [1e6]))
+    print(edges)
+    return pd.cut(x, edges, labels=False)
+
 def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
 
     # correct pupil and eyelid scalars:
@@ -1314,7 +1329,7 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
                 dfs.append(df)
             except:
                 pass
-        df = pd.concat(dfs)
+        df = pd.concat(dfs).reset_index(drop=True)
         if m == 'slope':
             df['{}_change'.format(m)] = df[m]
         else:
@@ -1323,6 +1338,11 @@ def correct_scalars(df_meta, group, velocity_cutoff, ind_clean_w):
 
         # bins:
         bins = np.array([-100,20,30,40,50,60,70,80,1000])
+        
+        # try:
+        #     df_meta['bins_{}'.format(m)] = df_meta.groupby(['subj_idx', 'session'])['{}_0'.format(m)].apply(make_bins, [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]) 
+        #     df['bins_{}'.format(m)] = df.groupby(['subj_idx', 'session'])['{}_b'.format(m)].apply(make_bins, [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]) 
+        # except:
         df_meta['bins_{}'.format(m)] = pd.cut(df_meta['{}_0'.format(m)], bins=bins, labels=False)
         df['bins_{}'.format(m)] = pd.cut(df['{}_b'.format(m)], bins=bins, labels=False)
 
@@ -1714,7 +1734,7 @@ def process_eye_data(file_meta, file_tdms, file_pupil, subj, ses, fig_dir, use_d
 
     # open eye data:
     df_eye = pd.read_hdf(file_pupil)
-    df_eye = df_eye.loc[:,['pupil', 'eyelid', 'pupil_x', 'pupil_y', 'is_blink_dlc']]
+    df_eye = df_eye.loc[:,['pupil', 'eyelid', 'pupil_x', 'pupil_y', 'blink_dlc']]
 
     # # add timestamps:
     # if frames[-1] > pulses.shape[0]:
@@ -1850,14 +1870,14 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
     epochs_l = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='eyelid_int_lp_frac', fs=fs)
     epochs_x = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='x_z', fs=fs)
     epochs_y = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='y_z', fs=fs)
-    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='is_blink', fs=fs)
+    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='blink', fs=fs)
     
     xmax = min((max(df_eye['time']/60), max(df_walk['time']/60)))
 
     fig = plt.figure(figsize=(24,18))
     
     row = 0
-    for measure in ['pupil_int_lp_frac', 'eyelid_int_lp_frac', 'x_z', 'y_z', 'is_blink', 'velocity', 'distance',]:
+    for measure in ['pupil_int_lp_frac', 'eyelid_int_lp_frac', 'x_z', 'y_z', 'blink', 'velocity', 'distance',]:
         
         if ('velocity' in measure) | ('distance' in measure):
             df = df_walk.copy()
@@ -1896,7 +1916,7 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
             x = np.linspace(-10,20,len(resp))
             color = sns.dark_palette("red", 5)[int(df_meta['amplitude_m_bin'].iloc[i])]
             if (measure == 'pupil_int_lp_frac') | (measure == 'eyelid_int_lp_frac') | (measure == 'x_z') | (measure == 'y_z'):
-                if df.loc[ind, 'is_blink'].mean() < 0.1:
+                if df.loc[ind, 'blink'].mean() < 0.1:
                     plt.plot(x[::10], resp[::10], color=color, lw=0.5, alpha=0.25)
             else:
                 plt.plot(x[::10], resp[::10], color=color, lw=0.5, alpha=0.25)
@@ -1933,34 +1953,38 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
     ### GET WALKING DATA ###
     df_walk = process_walk_data(file_tdms, fs_resample=fs_resample)
 
-    ### GET EYE DATA ###
-    df_eye = process_eye_data(file_meta, file_tdms, file_pupil, subj, ses, fig_dir, fs_resample=fs_resample)
-    if df_eye.shape[0] == 0:
+    # ### GET EYE DATA ###
+    # df_eye = process_eye_data(file_meta, file_tdms, file_pupil, subj, ses, fig_dir, fs_resample=fs_resample)
+    # if df_eye.shape[0] == 0:
+    #     return [pd.DataFrame([]) for _ in range(7)]
+    try:
+        df_eye = pd.read_hdf(file_pupil, key='pupil')
+    except:
         return [pd.DataFrame([]) for _ in range(7)]
 
     ### merge ###
     intact_sessions = pd.read_csv('/media/external1/projects/vns_exploration/Rayan/sessions.csv')
     intact_sessions = intact_sessions.loc[(intact_sessions['subj_idx']==subj)&(intact_sessions['session']==ses),:]
     if intact_sessions.shape[0] > 0:
-        df_merge = df_eye.loc[:,['time', 'pupil_int_lp_frac']].merge(df_walk.loc[:,['time', 'distance']], how='inner', on=['time'])
+        df_merge = df_eye.loc[:,['time', 'pupil']].merge(df_walk.loc[:,['time', 'distance']], how='inner', on=['time'])
         df_merge.to_csv('/media/external1/projects/vns_exploration/Rayan/{}_{}.csv'.format(subj, ses))
         df_meta.to_csv('/media/external1/projects/vns_exploration/Rayan/{}_{}_meta.csv'.format(subj, ses))
 
     # make epochs:
     fs = 50
     epochs_v = utils.make_epochs(df_walk, df_meta, locking='time', start=-60, dur=120, measure='distance', fs=fs)
-    epochs_p = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='pupil_int_lp_frac', fs=fs)
-    epochs_l = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='eyelid_int_lp_frac', fs=fs)
-    epochs_x = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='x_z', fs=fs)
-    epochs_y = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='y_z', fs=fs)
-    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='is_blink', fs=fs)
+    epochs_p = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='pupil', fs=fs)
+    epochs_l = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='eyelid', fs=fs)
+    # epochs_x = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='x_z', fs=fs)
+    # epochs_y = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='y_z', fs=fs)
+    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='blink', fs=fs)
 
     xmax = min((max(df_eye['time']/60), max(df_walk['time']/60)))
 
     fig = plt.figure(figsize=(24,18))
     
     row = 0
-    for measure in ['pupil_int_lp_frac', 'eyelid_int_lp_frac', 'x_z', 'y_z', 'is_blink', 'velocity', 'distance',]:
+    for measure in ['pupil', 'eyelid', 'blink', 'velocity', 'distance',]: #'x_z', 'y_z',
         
         if ('velocity' in measure) | ('distance' in measure):
             df = df_walk.copy()
@@ -1989,7 +2013,7 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
         for i, p in enumerate(df_meta['time']):
             ind = (df['time']>(p-10)) & (df['time']<(p+20))
             resp = np.array(df.loc[ind, measure])
-            if (measure == 'pupil_int_lp_frac') | (measure == 'eyelid_int_lp_frac') | (measure == 'x_z') | (measure == 'y_z') | (measure == 'distance'):
+            if (measure == 'pupil') | (measure == 'eyelid') | (measure == 'x_z') | (measure == 'y_z') | (measure == 'distance'):
                 if (measure == 'distance'):
                     ind_b = (df['time']>=(p-0.1)) & (df['time']<=(p+0.1))
                 else:
@@ -1998,8 +2022,8 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
                 resp = resp - baseline
             x = np.linspace(-10,20,len(resp))
             color = sns.dark_palette("red", 5)[int(df_meta['amplitude_m_bin'].iloc[i])]
-            if (measure == 'pupil_int_lp_frac') | (measure == 'eyelid_int_lp_frac') | (measure == 'x_z') | (measure == 'y_z'):
-                if df.loc[ind, 'is_blink'].mean() < 0.1:
+            if (measure == 'pupil') | (measure == 'eyelid') | (measure == 'x_z') | (measure == 'y_z'):
+                if df.loc[ind, 'blink'].mean() < 0.1:
                     plt.plot(x[::10], resp[::10], color=color, lw=0.5, alpha=0.25)
             else:
                 plt.plot(x[::10], resp[::10], color=color, lw=0.5, alpha=0.25)
@@ -2020,14 +2044,14 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
     #     dd = dd.rename(columns={'pupil_int_lp_frac': 'pupil'})
     #     dd.to_csv('/media/external2/forMatt/{}_{}.csv'.format(subj, ses))
     
-    return df_meta, epochs_v, epochs_p, epochs_l, epochs_x, epochs_y, epochs_b
+    return df_meta, epochs_v, epochs_p, epochs_l, epochs_b #epochs_x, epochs_y,
 
 def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resample='20L'):
 
     # get image timestamps:
     file_tdms = [fn for fn in glob.glob(os.path.join(raw_dir, subj, ses, '*.tdms')) if not 'h264' in fn][0]
     file_frames = [fn for fn in glob.glob(os.path.join(raw_dir, subj, ses, '*frame*.txt')) if not 'h264' in fn][0]
-    file_pupil = [fn for fn in glob.glob(os.path.join(raw_dir, subj, ses, 'pupil_preprocess', '*.hdf'))][0]
+    file_pupil = glob.glob(os.path.join('/media/external1/projects/vns_imaging/preprocess/', subj, ses, '*pupil_preprocessed.hdf'))[0]
     file_tiff = [fn for fn in glob.glob(os.path.join(raw_dir, subj, ses, '*.tif')) if not 'h264' in fn][0]
 
     ### get time:
@@ -2044,9 +2068,11 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     df_walk = process_walk_data(file_tdms, fs_resample=fs_resample)
 
     ### GET EYE DATA ###
-    df_eye = process_eye_data(file_frames, file_tdms, file_pupil, subj, ses, fig_dir, use_dlc_blinks=False, fs_resample=fs_resample)
-    print(df_eye['time'])
-    print('first pupil: {}'.format(df_eye['time'].iloc[0]))
+    # df_eye = process_eye_data(file_frames, file_tdms, file_pupil, subj, ses, fig_dir, use_dlc_blinks=False, fs_resample=fs_resample)
+    try:
+        df_eye = pd.read_hdf(file_pupil, key='pupil')
+    except:
+        return [pd.DataFrame([]) for _ in range(7)]
 
     ### get zoom factor:
     zoom = utils.get_image_zoom_factor(file_tiff)
@@ -2087,9 +2113,9 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     epochs_corr = utils.make_epochs(df=df_motion, df_meta=df_meta, locking='time', start=-60, dur=120, measure='corrXY', fs=fs,)
     epochs_w = utils.make_epochs(df=df_walk, df_meta=df_meta, locking='time', start=-60, dur=120, measure='distance', fs=fs,)
     epochs_v = utils.make_epochs(df_walk, df_meta, locking='time', start=-60, dur=120, measure='distance', fs=fs)
-    epochs_p = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='pupil_int_lp_frac', fs=fs)
-    epochs_l = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='eyelid_int_lp_frac', fs=fs)
-    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='is_blink', fs=fs)
+    epochs_p = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='pupil', fs=fs)
+    epochs_l = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='eyelid', fs=fs)
+    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='blink', fs=fs)
 
     # fluorescence:
     f = np.load(os.path.join(imaging_dir, subj, ses, 'F.npy'))
@@ -2215,6 +2241,6 @@ def analyse_light_control_session(raw_dir, data_dir, fig_dir, subj, ses, fs_resa
     # make epochs:
     fs = 50
     epochs_p = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='pupil_int_lp_frac', fs=fs)
-    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='is_blink', fs=fs)
+    epochs_b = utils.make_epochs(df_eye, df_meta, locking='time2', start=-60, dur=120, measure='blink', fs=fs)
 
     return df_meta, epochs_p, epochs_b
