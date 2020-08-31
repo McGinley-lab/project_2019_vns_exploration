@@ -34,7 +34,8 @@ sns.set(style='ticks', font='Arial', font_scale=1, rc={
     'xtick.color':'Black',
     'ytick.color':'Black',} )
 
-raw_dir = '/media/external1/raw/vns_baseline_pupil/data/'
+raw_dir = '/media/external1/raw/vns_baseline/data/'
+process_dir = '/media/external1/projects/vns_baseline/preprocess/'
 project_dir = '/home/jwdegee/vns_exploration'
 fig_dir = os.path.join(project_dir, 'figures', 'baseline')
 data_dir = os.path.join(project_dir, 'data', 'baseline')
@@ -49,9 +50,11 @@ for cuff_type in ['intact']:
         for ses in sessions:
             file_tdms = glob.glob(os.path.join(raw_dir, cuff_type, subj, ses, '*.tdms'))
             file_meta = glob.glob(os.path.join(raw_dir, cuff_type, subj, ses, '*preprocessed.mat'))
-            file_pupil = glob.glob(os.path.join(raw_dir, cuff_type, subj, ses, 'pupil_preprocess', '*.hdf'))
-            if (len(file_meta)==1)&(len(file_pupil)==1)&(len(file_tdms)==1):
-                tasks.append((file_meta[0], file_pupil[0], file_tdms[0], fig_dir, subj, cuff_type,))
+            # file_pupil = glob.glob(os.path.join(raw_dir, cuff_type, subj, ses, 'pupil_preprocess', '*.hdf'))
+            file_pupil = os.path.join(process_dir, subj, ses, '{}_{}_df_pupil_preprocessed.hdf'.format(subj, ses))
+            # if (len(file_meta)==1)&(len(file_pupil)==1)&(len(file_tdms)==1):
+            if (len(file_meta)==1)&(len(file_tdms)==1)&os.path.exists(file_pupil):
+                tasks.append((file_meta[0], file_pupil, file_tdms[0], fig_dir, subj, cuff_type,))
 
 preprocess = False
 if preprocess:
@@ -63,29 +66,29 @@ if preprocess:
     epochs_v = pd.concat([res[i][1] for i in range(len(res))], axis=0).reset_index(drop=True)
     epochs_p = pd.concat([res[i][2] for i in range(len(res))], axis=0).reset_index(drop=True)
     epochs_l = pd.concat([res[i][3] for i in range(len(res))], axis=0).reset_index(drop=True)
-    epochs_x = pd.concat([res[i][4] for i in range(len(res))], axis=0).reset_index(drop=True)
-    epochs_y = pd.concat([res[i][5] for i in range(len(res))], axis=0).reset_index(drop=True)
-    epochs_b = pd.concat([res[i][6] for i in range(len(res))], axis=0).reset_index(drop=True)
+    epochs_b = pd.concat([res[i][4] for i in range(len(res))], axis=0).reset_index(drop=True)
+    # epochs_x = pd.concat([res[i][4] for i in range(len(res))], axis=0).reset_index(drop=True)
+    # epochs_y = pd.concat([res[i][5] for i in range(len(res))], axis=0).reset_index(drop=True)
 
     # save:
     epochs_v.to_hdf(os.path.join(data_dir, 'epochs_v.hdf'), key='velocity')
     epochs_p.to_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil')
     epochs_l.to_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid')
-    epochs_x.to_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='eye_x')
-    epochs_y.to_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='eye_y')
     epochs_b.to_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
     df_meta.to_csv(os.path.join(data_dir, 'meta_data.csv'))
+    # epochs_x.to_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='eye_x')
+    # epochs_y.to_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='eye_y')
 
 # load:
 print('loading data')
 epochs_v = pd.read_hdf(os.path.join(data_dir, 'epochs_v.hdf'), key='velocity')
 epochs_p = pd.read_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil') * 100
 epochs_l = pd.read_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid') * 100
-epochs_x = pd.read_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='eye_x')
-epochs_y = pd.read_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='eye_y')
 epochs_b = pd.read_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
 epochs_s = epochs_p.diff(axis=1) * 50
 df_meta = pd.read_csv(os.path.join(data_dir, 'meta_data.csv'))
+# epochs_x = pd.read_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='eye_x')
+# epochs_y = pd.read_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='eye_y')
 print('finished loading data')
 
 # sample size:
@@ -210,52 +213,37 @@ figs[5].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean2.pdf'))
 # print(model.summary())
 
 # plot 1 -- time courses:
-
 bins = np.array([-10,0.2,0.3,0.4,0.5,0.6,0.7,0.8,10])
 fig = vns_analyses.plot_pupil_responses(df_meta, epochs_p.loc[:, ::10], bins=bins, ylabel='Pupil response\n(% max)', ylim=(0, 1.2))
 fig.savefig(os.path.join(fig_dir, 'pupil_timecourses.pdf'))
 
-
-
-
 # df_meta['bins_pupil'] = df_meta.groupby(['subj_idx', 'session'])['pupil_0'].apply(make_bins, [0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8]) 
 
 # plot 1 -- baseline dependence:
-fig = plt.figure(figsize=(8,2))
-for i, measure in enumerate(['pupil', 'pupil_c', 'pupil_c2', 'slope_c']):
-    means = df_meta.groupby('bins_pupil')[['pupil_c2', 'pupil_c', 'pupil', 'pupil_0', 'slope_c']].mean()
-    sems = df_meta.groupby('bins_pupil')[['pupil_c2', 'pupil_c', 'pupil', 'pupil_0', 'slope_c']].sem()
-    ax = fig.add_subplot(1,4,i+1)
-    plt.errorbar(means['pupil_0'], means[measure], yerr=sems[measure], color='k', elinewidth=0.5, mfc='lightgrey', fmt='o', ecolor='lightgray', capsize=0)
-    x = np.linspace(min(means['pupil_0']),max(means['pupil_0']),100)
-
-    func = vns_analyses.quadratic
-    popt,pcov = curve_fit(func, means['pupil_0'],means[measure],)
+df = df_meta.copy()
+df['pupil_cc'] = np.NaN
+df['include'] = 1
+for (subj, ses), d in df.groupby(['subj_idx', 'session']):
+    df.loc[d.index, 'pupil_cc'] = df.loc[d.index, 'pupil_c'] / df.loc[d.index, 'pupil_c'].mean()
     
-    predictions = func(df_meta['pupil_0'], *popt)
-    r, p = sp.stats.pearsonr(predictions, df_meta[measure])
-    plt.plot(x, func(x,*popt), '--', color='r')
-    
-    # func = vns_analyses.gaus
-    # popt,pcov = curve_fit(func, means['pupil_0'],means[measure],)
-    # plt.plot(x, func(x,*popt), '-', color='r')
-    
-    plt.xlabel('Baseline pupil')
-    plt.ylabel(measure)
-    plt.title('r = {}, p = {}'.format(round(r,3), round(p,3)))
-plt.tight_layout()
-sns.despine(trim=False, offset=3)
-fig.savefig(os.path.join(fig_dir, 'pupil_state_dependence.pdf'))
+    if df.loc[d.index, 'pupil_c'].mean() < 1:
+        df.loc[d.index, 'include'] = 0
 
-from sklearn import feature_selection
-df_meta['ones'] = 1
-df_meta['pupil_0_2'] = df_meta['pupil_0']**2
-df_meta['pupil_0_3'] = df_meta['pupil_0']**3
-df_meta['pupil_0_4'] = df_meta['pupil_0']**4
-df_meta['pupil_0_5'] = df_meta['pupil_0']**5
-feature_selection.f_regression(X=df_meta[['pupil_0', 'pupil_0_2', 'pupil_0_3', 'pupil_0_4', 'pupil_0_5']], y=df_meta['pupil_c2'])
-# feature_selection.f_regression(X=df_meta[['pupil_0', 'pupil_0_2', 'pupil_0_3', 'pupil_0_4', 'pupil_0_5']], y=df_meta['pupil_1s'])
+for X, bin_measure in zip(['pupil_0',], ['bins_pupil']):
+    for Y in ['pupil', 'pupil_c', 'pupil_cc']:
+        if not X == Y:
+            # plot:
+            fig = vns_analyses.plot_correlation(df, X=X, Y=Y, bin_measure=bin_measure, scatter=True)
+            fig.savefig(os.path.join(fig_dir, 'state_dependence_{}_{}.pdf'.format(X,Y)))
 
+for X, bin_measure in zip(['pupil_0',], ['bins_pupil']):
+    for Y in ['pupil', 'pupil_c', 'pupil_cc']:
+        if not X == Y:
+            # plot:
+            fig = vns_analyses.plot_correlation(df.loc[df['include']==1,:], X=X, Y=Y, bin_measure=bin_measure, scatter=True)
+            fig.savefig(os.path.join(fig_dir, 'state_dependence_{}_{}_subselected.pdf'.format(X,Y)))
+
+# figure:
 fig = plt.figure(figsize=(12,8))
 plt_nr = 1
 for (subj, ses), df in df_meta.groupby(['subj_idx', 'session']):
@@ -268,4 +256,3 @@ plt.title('group')
 sns.despine(trim=False, offset=3)
 plt.tight_layout()
 fig.savefig(os.path.join(fig_dir, 'baseline_histograms.pdf'))
-

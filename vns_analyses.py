@@ -36,16 +36,16 @@ def fsigmoid(x, a, b, s):
 def log_logistic(x, a, b, s):
     return s/(1+((x/a)**-b))
 
-def log_logistic_3d(M, a1, b1, s, a2, b2):
+def log_logistic_3d(M, a1, b1, s, a2, b2, offset=0):
     x = M[:,0]
     y = M[:,1]
-    return (s / (1+ ( (x/a1) **-b1 ) )) * (1/(1+((y/a2)**-b2)))
+    return offset + (s / (1+ ( (x/a1) **-b1 ) )) * (1/(1+((y/a2)**-b2)))
 
-def log_logistic_4d(M, a1, b1, s, a2, b2, a3, b3):
+def log_logistic_4d(M, a1, b1, s, a2, b2, a3, b3, offset=0):
     x = M[:,0]
     y = M[:,1]
     z = M[:,2]
-    return (s/(1+((x/a1)**-b1))) * (1/(1+((y/a2)**-b2))) * (1/(1+((z/a3)**-b3)))
+    return offset + (s/(1+((x/a1)**-b1))) * (1/(1+((y/a2)**-b2))) * (1/(1+((z/a3)**-b3)))
 
 def linear(x,a,b):
     return a + b*x 
@@ -92,7 +92,7 @@ def fit_log_logistic(df_meta, measure, resample=False):
 
     print()
     print('3 paramater model:')
-    print('r2 = {}'.format(r2))
+    print('R2 = {}'.format(r2))
     print('params = {}'.format([round(p,3) for p in popt]))
 
     # fit function:
@@ -110,7 +110,7 @@ def fit_log_logistic(df_meta, measure, resample=False):
 
     print()
     print('2 paramater model:')
-    print('r2 = {}'.format(r22))
+    print('R2 = {}'.format(r22))
     print('params = {}'.format([round(p,3) for p in popt2]))
 
     return popt2
@@ -343,6 +343,111 @@ def hypersurface(df, z_measure):
     print('{}% more variance explained!'.format(round(var_explained, 3)))
 
     return fig
+
+def plot_correlation_binned(df, x_measure, y_measure, bin_measure=None, n_bins=10, ax=None):
+
+    from scipy.optimize import curve_fit
+
+    if ax is None:
+        fig = plt.figure(figsize=(2,2))
+        ax = fig.add_subplot(111)
+    if bin_measure is None:
+        df['bins'] = pd.cut(df[x_measure], n_bins, labels=False)
+    else:
+        df['bins'] = df[bin_measure]
+    means = df.groupby('bins')[x_measure, y_measure].mean()
+    sems = df.groupby('bins')[x_measure, y_measure].sem()
+    plt.errorbar(means[x_measure], means[y_measure], yerr=sems[y_measure], color='k', elinewidth=0.5, mfc='lightgrey', fmt='o', ecolor='lightgray', capsize=0)
+    plt.xlabel(x_measure)
+    plt.ylabel(y_measure)
+    if 'fig' in locals():
+        sns.despine(trim=False, offset=3)
+        plt.tight_layout()
+        return fig
+    else:
+        return ax
+
+def plot_correlation(df, X='pupil_0', Y='calcium_c', bin_measure=None, scatter=True):
+    
+    fig = plt.figure(figsize=(2,2))
+    ax = fig.add_subplot(111)
+    # sns.regplot(df[X], df[Y], fit_reg=False, ax=ax)
+    if scatter:
+        sns.regplot(df[X], df[Y], fit_reg=False)
+    plot_correlation_binned(df, X, Y, bin_measure=bin_measure, n_bins=8, ax=ax)
+    
+    # model comparison:
+    F_values, p_values, model_dfs, resid_dfs, model = sequential_regression(df, x_measure=X, y_measure=Y)
+    bic1, bic2 = compare_regression(df, x_measure=X, y_measure=Y)
+
+    if model == 2:
+        func = quadratic
+    else:
+        func = linear
+    
+    popt,pcov = curve_fit(func, df[X], df[Y])
+    predictions = func(df[X], *popt)
+
+    x = np.linspace(ax.get_xlim()[0], ax.get_xlim()[1] ,100)
+    plt.plot(x, func(x,*popt), '--', color='r')
+    
+    r, p = sp.stats.pearsonr(df[Y], predictions)
+    r = (r**2)*100
+
+    plt.title('F({},{}) = {}, p = {}\nF({},{}) = {}, p = {}'.format(int(model_dfs[1]), int(resid_dfs[1]), round(F_values[1],2), round(p_values[1],3),
+                                                        int(model_dfs[2]), int(resid_dfs[2]), round(F_values[2],2), round(p_values[2],3)))
+    # plt.title('BIC1 = {}\nBIC2 = {}'.format(round(bic1,2), round(bic2,3),))
+    plt.text(0.1, 0.1, 'R2 = {}%, p = {}'.format(round(r,2), round(p,3)), size=7, horizontalalignment='center', verticalalignment='center', transform=ax.transAxes)
+    sns.despine(trim=False, offset=3)
+    plt.tight_layout()
+
+    return fig
+
+def plot_partial_correlations(df, X, Y, M):
+
+    import statsmodels.api as sm
+    df['{}_partial'.format(X)] = sm.OLS(df[X], sm.tools.add_constant(df[M])).fit().resid
+    df['{}_partial'.format(Y)] = sm.OLS(df[Y], sm.tools.add_constant(df[M])).fit().resid
+    fig = plot_correlation(df, X='{}_partial'.format(X), Y='{}_partial'.format(Y), bin_measure=None, scatter=True)    
+
+    return fig
+
+def compare_regression(df, x_measure, y_measure):
+
+    import statsmodels.api as sm
+    from sklearn.preprocessing import PolynomialFeatures
+
+    endog = df[y_measure]
+    exog = df[x_measure]-df[x_measure].mean()
+    exog1 = sm.add_constant(exog)
+    results1 = sm.OLS(endog, exog1).fit()
+    exog2 = pd.concat((sm.add_constant(exog), exog**2), axis=1)
+    results2 = sm.OLS(endog, exog2).fit()
+    return results1.bic, results2.bic
+
+def sequential_regression(df, x_measure, y_measure, order=5):
+    import statsmodels.api as sm
+    
+    df['y'] = df[y_measure]
+    F_values = []
+    p_values = []
+    model_dfs = []
+    resid_dfs = []
+    for o in range(0,order):
+        df['x'] = (df[x_measure]-df[x_measure].mean())**o
+        results = sm.OLS(df['y'], df['x']).fit() 
+        F_values.append(results.fvalue)
+        p_values.append(results.f_pvalue)
+        model_dfs.append(results.df_model)
+        resid_dfs.append(results.df_resid)
+        df['y'] = results.resid
+
+    model = 0
+    for o in range(0,order):
+        if p_values[o] < 0.05:
+            model = o
+
+    return F_values, p_values, model_dfs, resid_dfs, model
 
 def plot_param_preprocessing(df, popt=None, popts=None):
 
@@ -633,6 +738,12 @@ def catplot_scalars(df, measure, ylim, log_scale=False, charge=None):
 
 def plot_scalars(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p0=False):
 
+    epsilon = 1e-10
+    if '_' in measure:
+        offset = 0
+    else:
+        offset = df_meta[measure+'_0'].mean()
+
     # fit function:
     x = np.array(df_meta.loc[:,['amplitude', 'width', 'rate']])
     y = np.array(df_meta.loc[:,[measure]]).ravel()
@@ -642,7 +753,7 @@ def plot_scalars(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p
     else:
         func = log_logistic_4d
         popt, pcov = curve_fit(func, x, y,
-                        method='trf', bounds=([0, 0, 0, 0, 0, 0, 0], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf]), max_nfev=50000)
+                        method='trf', bounds=([0, 0, 0, 0, 0, 0, 0, offset-epsilon], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, offset+epsilon]), max_nfev=50000)
     
     # fitted surface:
     x1 = np.round(np.arange(0,0.9025,0.025),3)
@@ -734,7 +845,7 @@ def plot_scalars(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p
         if x_measure == 'charge':
             plt.title('{}'.format(measure))
         else:
-            plt.title('{}\nr2 = {}%'.format(param, round(r2,2),))
+            plt.title('{}\nR2 = {}%'.format(param, round(r2,2),))
         plt.xlabel(x_measure)
         plt.ylabel(ylabel)
         plot_nr += 1
@@ -745,6 +856,12 @@ def plot_scalars(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p
 
 def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p0=False):
 
+    epsilon = 1e-10
+    if '_' in measure:
+        offset = 0
+    else:
+        offset = df_meta[measure+'_0'].mean()
+
     # fit function:
     x = np.array(df_meta.loc[:,['amplitude', 'width', 'rate']])
     y = np.array(df_meta.loc[:,[measure]]).ravel()
@@ -754,7 +871,7 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), 
     else:
         func = log_logistic_4d
         popt, pcov = curve_fit(func, x, y,
-                        method='trf', bounds=([0, 0, 0, 0, 0, 0, 0], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf]), max_nfev=50000)
+                        method='trf', bounds=([0, 0, 0, 0, 0, 0, 0, offset-epsilon], [np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, np.inf, offset+epsilon]), max_nfev=50000)
 
     # fitted surface:
     x1 = np.round(np.arange(0,0.9025,0.025),3)
@@ -767,8 +884,9 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), 
     df_surf['ne'] = func(np.array(df_surf[['amplitude', 'width', 'rate']]), *popt)
 
     # variance explained:
-    predictions = func(x, *popt) 
-    r2 = (sp.stats.pearsonr(df_meta[measure], predictions)[0]**2) * 100
+    predictions = func(x, *popt)
+    r_fit, p_fit = sp.stats.pearsonr(df_meta[measure], predictions)
+    r2_fit = (r_fit**2) * 100
 
     # fit function:
     x = np.array(df_meta.loc[:,['charge', 'rate']])
@@ -779,7 +897,7 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), 
     else:
         func2 = log_logistic_3d
         popt2, pcov2 = curve_fit(func2, x, y,
-                        method='trf', bounds=([0, 0, 0, 0, 0,], [np.inf, np.inf, np.inf, np.inf, np.inf,]), max_nfev=50000)
+                        method='trf', bounds=([0, 0, 0, 0, 0, offset-epsilon], [np.inf, np.inf, np.inf, np.inf, np.inf, offset+epsilon]), max_nfev=50000)
 
     # fitted surface:
     x1 = np.round(np.arange(0.01,0.725,0.005),3)
@@ -791,21 +909,27 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), 
     df_surf2 = df_surf2.loc[df_surf2['charge']>0,:]
 
     # variance explained:
-    predictions2 = func2(x, *popt2) 
-    r22 = (sp.stats.pearsonr(df_meta[measure], predictions2)[0]**2) * 100
+    predictions2 = func2(x, *popt2)
+    r_fit_2, p_fit_2 = sp.stats.pearsonr(df_meta[measure], predictions2)
+    r2_fit_2 = (r_fit_2**2) * 100
 
     # plot:
-    fig = plt.figure(figsize=(6,4))
+    # fig = plt.figure(figsize=(6,4))
+    fig = plt.figure(figsize=(6,2))
     plot_nr = 1
-    for bin_by, x_measure in zip([['amplitude_bin', 'rate'], ['width', 'rate'], ['charge_bin', 'rate'], 
-                                        ['amplitude_bin', 'width'], ['amplitude_bin', 'rate'], ['width', 'rate'],], 
-                                        ['amplitude', 'width', 'charge', 'amplitude', 'amplitude', 'width'],):
-        
+    # for bin_by, x_measure in zip([['amplitude_bin', 'rate'], ['width', 'rate'], ['charge_bin', 'rate'], 
+    #                                     ['amplitude_bin', 'width'], ['amplitude_bin', 'rate'], ['width', 'rate'],], 
+    #                                     ['amplitude', 'width', 'charge', 'amplitude', 'amplitude', 'width'],):
+
+    for bin_by, x_measure in zip([['amplitude_bin', 'rate'], ['width', 'rate'], ['charge_bin', 'rate'],], 
+                                        ['amplitude', 'width', 'charge',],):
+
         means = df_meta.groupby(bin_by)[[measure, 'amplitude', 'charge']].mean().reset_index()
         sems = df_meta.groupby(bin_by)[[measure, 'amplitude', 'charge']].sem().reset_index()
         sems.loc[:,measure] = sems.loc[:,measure]*1.96
 
-        ax = fig.add_subplot(2,3,plot_nr)
+        # ax = fig.add_subplot(2,3,plot_nr)
+        ax = fig.add_subplot(1,3,plot_nr)
         # colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
         if ('pupil' in measure) or ('offset' in measure):
             colors = sns.color_palette("YlOrRd", len(means[bin_by[1]].unique()))
@@ -830,6 +954,15 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), 
             ax.errorbar(x=x, y=y, yerr=np.array(sems.loc[sems[bin_by[1]]==m2, measure]), elinewidth=0.5, markeredgewidth=0.5, 
                             fmt='none', ecolor='darkgrey', capsize=2, zorder=2)
 
+            if not '_' in measure:
+                try:
+                    mm = df_meta[measure+'_0'].mean()
+                    ss = df_meta[measure+'_0'].sem()*1.96
+                    plt.axhspan(mm-ss, mm+ss, color='black', alpha=0.1)
+                    plt.axhline(mm, color='black', lw=1, alpha=1)
+                except:
+                    pass
+            
             # fit: 
             if x_measure == 'charge':
                 d = df_surf2.loc[df_surf2[bin_by[1]]==m2,].groupby(x_measure).mean().reset_index()
@@ -872,13 +1005,13 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), 
         plt.xlabel(x_measure)
         plt.ylabel(ylabel)
         if x_measure == 'charge':
-            plt.title('{}\nr2 = {}%'.format(x_measure, round(r22,2)))
+            plt.title('{}\nR2 = {}%, p = {}'.format(x_measure, round(r2_fit_2,2), round(p_fit_2,2)))
             ax.set_xscale('log')
         elif x_measure == 'amplitude':
-            plt.title('{}\nr2 = {}%'.format(x_measure, round(r2,2)))
+            plt.title('{}\nR2 = {}%, p = {}'.format(x_measure, round(r2_fit,2), round(p_fit,2)))
             plt.xticks(ticks=[0.1,0.3,0.5,0.7,0.9], labels=[0.1,0.3,0.5,0.7,0.9])
         else:
-            plt.title('{}\nr2 = {}%'.format(x_measure, round(r2,2)))
+            plt.title('{}\nR2 = {}%, p = {}'.format(x_measure, round(r2_fit,2), round(p_fit,2)))
             plt.xticks(ticks=np.round(np.sort(df_meta[x_measure].unique()),1), labels=np.round(np.sort(df_meta[x_measure].unique()),1))
         
         plot_nr += 1
@@ -1034,11 +1167,11 @@ def plot_pupil_responses_matrix_():
         if rate_bin < 3:
             vmin = -1
             vmax = 1
-            cax = ax.pcolormesh(np.arange(5), np.arange(6), np.log10(X*rates[rate_bin]), vmin=vmin, vmax=vmax, cmap=cmap)
+            cax = ax.pcolormesh(np.arange(5), np.arange(6), np.log10(X*rates[rate_bin]), vmin=vmin, vmax=vmax, cmap='YlOrRd')
         else:
             vmin = -2
             vmax = 0
-            cax = ax.pcolormesh(np.arange(5), np.arange(6), np.log10(X), vmin=vmin, vmax=vmax, cmap=cmap)
+            cax = ax.pcolormesh(np.arange(5), np.arange(6), np.log10(X), vmin=vmin, vmax=vmax, cmap='YlOrRd')
         plt.title('Rate bin {}'.format(rate_bin))
         plt.xlabel('Width (ms)')
         plt.ylabel('Amplitude (mA)')
@@ -1704,14 +1837,13 @@ def process_walk_data(file_tdms, fs_resample='2L'):
     only_zeros = (np.mean(df_walk['velocity']==0) == 1)
 
     # resample to 500 Hz:
-    index = pd.to_datetime(df_walk['time'], unit='s')
+    index = pd.to_timedelta(df_walk['time'], unit='s')
     df_walk = df_walk.loc[:,['velocity', 'distance']]
     df_walk = df_walk.set_index(index)
     df_walk = df_walk.resample(fs_resample).mean().interpolate('linear').reset_index()
-
     # df_walk = df_walk.resample('2L').fillna('pad').reset_index()
     # df_walk = df_walk.fillna(method='backfill') 
-    df_walk['time'] = pd.to_timedelta(df_walk['time']).dt.total_seconds() 
+    df_walk['time'] = df_walk['time'].dt.total_seconds()
 
     # df_walk['velocity_lp'] = preprocess_pupil._butter_lowpass_filter(data=df_walk['velocity'], highcut=1, fs=fs, order=3)
 
@@ -1780,12 +1912,13 @@ def process_eye_data(file_meta, file_tdms, file_pupil, subj, ses, fig_dir, use_d
     df_eye['time'] = np.array(eye_timestamps['time'])
 
     # resample:
-    index = pd.to_datetime(np.array(df_eye['time']), unit='s') 
+    index = pd.to_timedelta(np.array(df_eye['time']), unit='s') 
     df_eye = df_eye.set_index(index)
     df_eye = df_eye.resample(fs_resample).mean().interpolate('linear').reset_index()
     # df_eye = df_eye.resample('2L').fillna('pad').reset_index()
     # df_eye = df_eye.fillna(method='backfill') 
-    df_eye['time'] = pd.to_timedelta(df_eye['index']).dt.total_seconds() 
+    df_eye['time'] = df_eye['index'].dt.total_seconds()
+
     df_eye = df_eye.drop(labels=['index'], axis=1)
 
     # preprocess pupil:
@@ -1859,17 +1992,22 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
     df_walk = process_walk_data(file_tdms, fs_resample=fs_resample)
 
     ### GET EYE DATA ###
-    df_eye = process_eye_data(file_meta, file_tdms, file_pupil, subj, ses, fig_dir, fs_resample=fs_resample)
-    if df_eye.shape[0] == 0:
+    # df_eye = process_eye_data(file_meta, file_tdms, file_pupil, subj, ses, fig_dir, fs_resample=fs_resample)
+    # if df_eye.shape[0] == 0:
+    #     return [pd.DataFrame([]) for _ in range(7)]
+    
+    try:
+        df_eye = pd.read_hdf(file_pupil, key='pupil')
+    except:
         return [pd.DataFrame([]) for _ in range(7)]
-
+    
     # make epochs:
     fs = 50
     epochs_v = utils.make_epochs(df_walk, df_meta, locking='time', start=-60, dur=120, measure='distance', fs=fs)
-    epochs_p = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='pupil_int_lp_frac', fs=fs)
-    epochs_l = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='eyelid_int_lp_frac', fs=fs)
-    epochs_x = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='x_z', fs=fs)
-    epochs_y = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='y_z', fs=fs)
+    epochs_p = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='pupil', fs=fs)
+    epochs_l = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='eyelid', fs=fs)
+    # epochs_x = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='x_z', fs=fs)
+    # epochs_y = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='y_z', fs=fs)
     epochs_b = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='blink', fs=fs)
     
     xmax = min((max(df_eye['time']/60), max(df_walk['time']/60)))
@@ -1877,7 +2015,7 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
     fig = plt.figure(figsize=(24,18))
     
     row = 0
-    for measure in ['pupil_int_lp_frac', 'eyelid_int_lp_frac', 'x_z', 'y_z', 'blink', 'velocity', 'distance',]:
+    for measure in ['pupil', 'eyelid', 'blink', 'velocity', 'distance',]: #'x_z', 'y_z',
         
         if ('velocity' in measure) | ('distance' in measure):
             df = df_walk.copy()
@@ -1906,7 +2044,7 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
         for i, p in enumerate(df_meta['time']):
             ind = (df['time']>(p-10)) & (df['time']<(p+20))
             resp = np.array(df.loc[ind, measure])
-            if (measure == 'pupil_int_lp_frac') | (measure == 'eyelid_int_lp_frac') | (measure == 'x_z') | (measure == 'y_z') | (measure == 'distance'):
+            if (measure == 'pupil') | (measure == 'eyelid') | (measure == 'x_z') | (measure == 'y_z') | (measure == 'distance'):
                 if (measure == 'distance'):
                     ind_b = (df['time']>=(p-0.1)) & (df['time']<=(p+0.1))
                 else:
@@ -1915,7 +2053,7 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
                 resp = resp - baseline
             x = np.linspace(-10,20,len(resp))
             color = sns.dark_palette("red", 5)[int(df_meta['amplitude_m_bin'].iloc[i])]
-            if (measure == 'pupil_int_lp_frac') | (measure == 'eyelid_int_lp_frac') | (measure == 'x_z') | (measure == 'y_z'):
+            if (measure == 'pupil') | (measure == 'eyelid') | (measure == 'x_z') | (measure == 'y_z'):
                 if df.loc[ind, 'blink'].mean() < 0.1:
                     plt.plot(x[::10], resp[::10], color=color, lw=0.5, alpha=0.25)
             else:
@@ -1930,7 +2068,7 @@ def analyse_baseline_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cu
     
     plt.close('all')
 
-    return df_meta, epochs_v, epochs_p, epochs_l, epochs_x, epochs_y, epochs_b
+    return df_meta, epochs_v, epochs_p, epochs_l, epochs_b #epochs_x, epochs_y,
 
 def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj, cuff_type, stim_overview, fs_resample='20L'):
 
@@ -1970,13 +2108,17 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
         df_merge.to_csv('/media/external1/projects/vns_exploration/Rayan/{}_{}.csv'.format(subj, ses))
         df_meta.to_csv('/media/external1/projects/vns_exploration/Rayan/{}_{}_meta.csv'.format(subj, ses))
 
+    # z-score eye data:
+    df_eye['pupil_x_z'] = (df_eye['pupil_x'] - df_eye['pupil_x'].mean()) / df_eye['pupil_x'].std()
+    df_eye['pupil_y_z'] = (df_eye['pupil_y'] - df_eye['pupil_y'].mean()) / df_eye['pupil_y'].std()
+
     # make epochs:
     fs = 50
     epochs_v = utils.make_epochs(df_walk, df_meta, locking='time', start=-60, dur=120, measure='distance', fs=fs)
     epochs_p = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='pupil', fs=fs)
     epochs_l = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='eyelid', fs=fs)
-    # epochs_x = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='x_z', fs=fs)
-    # epochs_y = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='y_z', fs=fs)
+    epochs_x = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='pupil_x_z', fs=fs)
+    epochs_y = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='pupil_y_z', fs=fs)
     epochs_b = utils.make_epochs(df_eye, df_meta, locking='time', start=-60, dur=120, measure='blink', fs=fs)
 
     xmax = min((max(df_eye['time']/60), max(df_walk['time']/60)))
@@ -2044,7 +2186,7 @@ def analyse_exploration_session(file_meta, file_pupil, file_tdms, fig_dir, subj,
     #     dd = dd.rename(columns={'pupil_int_lp_frac': 'pupil'})
     #     dd.to_csv('/media/external2/forMatt/{}_{}.csv'.format(subj, ses))
     
-    return df_meta, epochs_v, epochs_p, epochs_l, epochs_b #epochs_x, epochs_y,
+    return df_meta, epochs_v, epochs_p, epochs_l, epochs_b, epochs_x, epochs_y
 
 def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resample='20L'):
 
@@ -2099,15 +2241,18 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     df_motion['time'] = np.array(time)
 
     # resample:
-    index = pd.to_datetime(np.array(df_motion['time']), unit='s') 
+    index = pd.to_timedelta(np.array(df_motion['time']), unit='s') 
     df_motion = df_motion.set_index(index)
     df_motion = df_motion.resample(fs_resample).mean().interpolate('linear').reset_index()
-    df_motion['time'] = pd.to_timedelta(df_motion['index']).dt.total_seconds() 
+    df_motion['time'] = df_motion['index'].dt.total_seconds()
     df_motion = df_motion.drop(labels=['index'], axis=1)
 
     # make epochs:
     fs = 50
-    df_meta['time2'] = df_meta['time']-2
+    if subj == 'C1773':
+        df_meta['time2'] = df_meta['time']-2.5
+    else:
+        df_meta['time2'] = df_meta['time']
     epochs_x = utils.make_epochs(df=df_motion, df_meta=df_meta, locking='time', start=-60, dur=120, measure='xoff', fs=fs,)
     epochs_y = utils.make_epochs(df=df_motion, df_meta=df_meta, locking='time', start=-60, dur=120, measure='yoff', fs=fs,)
     epochs_corr = utils.make_epochs(df=df_motion, df_meta=df_meta, locking='time', start=-60, dur=120, measure='corrXY', fs=fs,)
@@ -2119,6 +2264,8 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
 
     # fluorescence:
     f = np.load(os.path.join(imaging_dir, subj, ses, 'F.npy'))
+    # fneu = np.load(os.path.join(imaging_dir, subj, ses, 'Fneu.npy'))
+    # f = f - (0.7*fneu)
     t = np.array(time['time'])
     if len(f) > len(t):
         f = f[:len(t)]
@@ -2126,10 +2273,10 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
     fluorescence['time'] = t
 
     # resample:
-    index = pd.to_datetime(np.array(fluorescence['time']), unit='s') 
+    index = pd.to_timedelta(np.array(fluorescence['time']), unit='s') 
     fluorescence = fluorescence.set_index(index)
     fluorescence = fluorescence.resample(fs_resample).mean().interpolate('linear').reset_index()
-    fluorescence['time'] = pd.to_timedelta(fluorescence['index']).dt.total_seconds() 
+    fluorescence['time'] = fluorescence['index'].dt.total_seconds()
     fluorescence = fluorescence.drop(labels=['index'], axis=1)
     
     # preprocess:
@@ -2189,8 +2336,8 @@ def analyse_imaging_session(raw_dir, imaging_dir, fig_dir, subj, ses, fs_resampl
 
     # update:
     fluorescence['F'] = fluorescence['F1']
-    fluorescence['F'] = ((fluorescence['F'] - np.percentile(fluorescence['F'], 0.01)) / 
-                            (np.percentile(fluorescence['F'], 99.9) - np.percentile(fluorescence['F'], 0.01)))
+    fluorescence['F'] = ((fluorescence['F'] - np.percentile(fluorescence['F'], 0.05)) / 
+                            (np.percentile(fluorescence['F'], 99.5) - np.percentile(fluorescence['F'], 0.05)))
 
     # summary figure: 
     fig = fig_image_quality(ops['refImg'], ops['meanImg'], df_motion.iloc[::10].reset_index(), 
