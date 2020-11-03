@@ -491,10 +491,10 @@ if preprocess:
     epochs_p.to_hdf(os.path.join(data_dir, 'epochs_p.hdf'), key='pupil')
     epochs_l.to_hdf(os.path.join(data_dir, 'epochs_l.hdf'), key='eyelid')
     epochs_b.to_hdf(os.path.join(data_dir, 'epochs_b.hdf'), key='blink')
-    df_meta.to_csv(os.path.join(data_dir, 'meta_data.csv'))
     epochs_x.to_hdf(os.path.join(data_dir, 'epochs_x.hdf'), key='eye_x')
     epochs_y.to_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='eye_y')
-
+    df_meta.to_csv(os.path.join(data_dir, 'meta_data.csv'))
+    
 # load:
 print('loading data')
 epochs_v = pd.read_hdf(os.path.join(data_dir, 'epochs_v.hdf'), key='velocity')
@@ -506,16 +506,11 @@ epochs_y = pd.read_hdf(os.path.join(data_dir, 'epochs_y.hdf'), key='eye_y')
 df_meta = pd.read_csv(os.path.join(data_dir, 'meta_data.csv'))
 print('finished loading data')
 
-# preprocess slope:
+# pupil slope:
 epochs_s = epochs_p.diff(axis=1) * 50
-# # epochs_s = epochs_s.rolling(window=10, min_periods=1, axis=1).mean()
-# for i in range(epochs_s.shape[0]):
-#     ind = ~np.isnan(epochs_s.iloc[i,:])
-#     if sum(ind)>0:
-#         epochs_s.loc[i,ind] = utils._butter_lowpass_filter(epochs_s.loc[i,ind], highcut=3, fs=50, order=3)
 
 # round:
-df_meta['date'] = pd.to_datetime(df_meta.date, format='%Y/%m/%d', errors = 'coerce')
+df_meta['date'] = pd.to_datetime(df_meta.date, format='%Y/%m/%d', errors='coerce')
 df_meta['amplitude'] = np.round(df_meta['amplitude'], 3)
 df_meta['width'] = np.round(df_meta['width'], 3)
 df_meta['rate'] = np.round(df_meta['rate'], 3)
@@ -638,34 +633,20 @@ for S, m in zip([S_x, S_y], ['x', 'y']):
             fig = vns_analyses.plot_scalars2(df_meta.loc[cuff_ind,:], measure='eyemovement_{}_1'.format(m), ylabel=None, ylim=(0,75))
             fig.savefig(os.path.join(fig_dir, 'eyemovement', title, 'scalars2_{}_{}_{}.pdf'.format(title, cuff_type, 'eyemovement_{}_1'.format(m))))
 
-
-
-# u_ind = 41
-# g_ind = 102
-# # g_ind = 54
-# ind = (epochs_x.columns>=-2)&(epochs_x.columns<=15)
-# b_ind = (epochs_x.columns>=-2)&(epochs_x.columns<=0)
-
-# fig = plt.figure(figsize=(7.5,2))
-# ax = fig.add_subplot(211)
-# # plt.plot(epochs_x.columns[ind], epochs_x.loc[ind_u&(df_meta['cuff_type']=='intact'), ind].iloc[u_ind]-epochs_x.loc[ind_u&(df_meta['cuff_type']=='intact'), b_ind].iloc[u_ind].mean())
-# plt.plot(epochs_y.columns[ind], 
-#             epochs_y.loc[ind_u&(df_meta['cuff_type']=='intact'), ind].iloc[u_ind]-epochs_y.loc[ind_u&(df_meta['cuff_type']=='intact'), b_ind].iloc[u_ind].mean(),
-#             lw=0.5)
-# plt.axvspan(0, 10, color='k', alpha=0.2)
-# # plt.ylim(-0.5, 0.5)
-# plt.ylabel('x/y position')
-# ax = fig.add_subplot(212)
-# # plt.plot(epochs_x.columns[ind], epochs_x.loc[ind_g&(df_meta['cuff_type']=='intact'), ind].iloc[g_ind]-epochs_x.loc[ind_g&(df_meta['cuff_type']=='intact'), b_ind].iloc[g_ind].mean())
-# plt.plot(epochs_y.columns[ind], 
-#             epochs_y.loc[ind_g&(df_meta['cuff_type']=='intact'), ind].iloc[g_ind]-epochs_y.loc[ind_g&(df_meta['cuff_type']=='intact'), b_ind].iloc[g_ind].mean(),
-#             lw=0.5)
-# plt.axvspan(0, 10, color='k', alpha=0.2)
-# # plt.ylim(-0.5, 0.5)
-# plt.ylabel('x/y position')
-# # plt.show()
-# fig.savefig(os.path.join(fig_dir, 'eyemovement', 'example_timeseries.pdf'))
-
+# save source data:
+for cuff in ['intact', 'single', 'double']:
+    for grounded_ind, grounded in zip([ind_u, ind_g], ['u', 'g']):
+        for measure in ['pupil_c', 'eyelid_c', 'walk_c', 'velocity_c', 'walk_1', 'velocity_1', 'eyemovement_x_1', 'eyemovement_y_1']:
+            ind = grounded_ind&(df_meta['cuff_type']==cuff)
+            if ('walk' in measure) | ('velocity' in measure):
+                ind = ind & ind_clean_w
+            df = df_meta.loc[ind,['subj_idx', 'session', 'amplitude', 'width', 'rate', 'charge', 'charge_bin', measure]].reset_index(drop=True)
+            if 'eyemovement' in measure:
+                df = df.rename({measure:measure.split('_')[0]+'_'+measure.split('_')[1]}, axis=1)
+                df.to_csv(os.path.join(data_dir, 'exploration_source_data_{}_{}_{}.csv'.format(grounded, cuff, measure.split('_')[0]+'_'+measure.split('_')[1])))
+            else:
+                df = df.rename({measure:measure.split('_')[0]}, axis=1)
+                df.to_csv(os.path.join(data_dir, 'exploration_source_data_{}_{}_{}.csv'.format(grounded, cuff, measure.split('_')[0])))
 
 
 
@@ -698,12 +679,12 @@ for ind, title in zip([ind_u, ind_g,], ['u', 'g',]):
 # print print log logistic params:
 print_log_logistic_params(df_meta)
 
-# # velocity histogram:
-# fig = plot_velocity_histogram(df_meta)
-# fig.savefig(os.path.join(fig_dir, 'velocity_hist.pdf'))
+# velocity histogram:
+fig = plot_velocity_histogram(df_meta)
+fig.savefig(os.path.join(fig_dir, 'velocity_hist.pdf'))
 
-# # half max analyses:
-# half_max_analyses(df_meta, fig_dir)
+# half max analyses:
+half_max_analyses(df_meta, fig_dir)
 
 # plot pupil responses:
 fig = plt.figure(figsize=(20,3))
@@ -738,8 +719,6 @@ for X, bin_measure in zip(['pupil_0',], ['bins_pupil']):
 fig = plot_baseline_dependence(df_meta.loc[ind_u])
 fig.savefig(os.path.join(fig_dir, 'pupil_state_dependence.pdf'))
 
-shell()
-
 # all remaining plots:
 run_all = 1
 if run_all:
@@ -748,7 +727,7 @@ if run_all:
     # for measure in ['velocity']:
     #     for cuff_type in ['intact']:
     
-    for measure in ['pupil', 'eyelid', 'velocity', 'walk', 'offset']: # 'slope'
+    for measure in ['pupil', 'eyelid', 'velocity', 'walk']:
         for cuff_type in ['intact', 'single', 'double']:
 
             cuff_ind = np.array(df_meta['cuff_type'] == cuff_type)
@@ -788,6 +767,12 @@ if run_all:
                     fig.savefig(os.path.join(fig_dir, measure, title, 'scalars2_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
                     fig = vns_analyses.plot_scalars3(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, ylabel=measure, ylim=ylim)
                     fig.savefig(os.path.join(fig_dir, measure, title, 'scalars3_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
+
+                    fig1, fig2, fig3 = vns_analyses.plot_swarms(df_meta.loc[ind &  ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext)
+                    fig1.savefig(os.path.join(fig_dir, measure, title, 'swarms_amp_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
+                    fig2.savefig(os.path.join(fig_dir, measure, title, 'swarms_width_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
+                    fig3.savefig(os.path.join(fig_dir, measure, title, 'swarms_zone_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
+
                     try:
                         fig = vns_analyses.plot_pupil_responses_matrix(df_meta.loc[ind & ~np.isnan(df_meta[measure+measure_ext]), :], measure=measure+measure_ext, vmin=-ylim[1], vmax=ylim[1])
                         fig.savefig(os.path.join(fig_dir, measure, title, 'matrix_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
@@ -798,67 +783,3 @@ if run_all:
                         fig.savefig(os.path.join(fig_dir, measure, title, '3dplot_{}_{}_{}.pdf'.format(title, cuff_type, measure+measure_ext)))
                     except:
                         pass
-
-
-# # variance explained charge:
-# ind = (df_meta['cuff_type'] == 'intact') & ind_u
-# x = np.array(df_meta.loc[ind,['charge', 'rate']])
-# y = np.array(df_meta.loc[ind,['pupil_c']]).ravel()
-# func = vns_analyses.log_logistic_3d
-# popt, pcov = curve_fit(func, x, y, 
-#                 method='dogbox', bounds=([0, 0, 0, 0, 0,], [np.inf, np.inf, np.inf, np.inf, np.inf,]))
-# predictions = func(x, *popt) 
-# r2 = (sp.stats.pearsonr(y, predictions)[0]**2) * 100
-# print(r2)
-
-# # normalize per session:
-# means = df_meta.loc[(df_meta['cuff_type']=='intact')&ind_u].groupby(['subj_idx', 'session'])['pupil_c'].mean().reset_index()
-# stds = df_meta.loc[(df_meta['cuff_type']=='intact')&ind_u].groupby(['subj_idx', 'session'])['pupil_c'].std().reset_index()
-# cv = stds.copy()
-# cv['pupil_c'] = cv['pupil_c'] / means['pupil_c']
-
-# fig = plt.figure(figsize=(2,6))
-# ax = fig.add_subplot(311)
-# plt.hist(means['pupil_c'], bins=15)
-# plt.xlabel('mean pupil')
-# ax = fig.add_subplot(312)
-# plt.hist(stds['pupil_c'], bins=15)
-# plt.xlabel('std pupil')
-# ax = fig.add_subplot(313)
-# plt.hist(cv['pupil_c'], bins=5000)
-# plt.xlim(-30,30)
-# plt.xlabel('Cov. variation')
-# plt.tight_layout()
-# sns.despine(trim=False, offset=3)
-# fig.savefig(os.path.join(fig_dir, 'varation_across_session.pdf'))
-
-
-# # pupil histogram:
-# fig = plt.figure(figsize=(4,4))
-# plt.hist(df_meta.loc[ind_w_0,'pupil_c'], histtype='stepfilled', alpha=0.2, bins=100, color='r', label='walking')
-# plt.hist(df_meta.loc[ind_s_0,'pupil_c'], histtype='stepfilled', alpha=0.2, bins=100, color='g', label='still')
-# plt.axvline(df_meta.loc[ind_w_0,'pupil_c'].mean(), color='r')
-# plt.axvline(df_meta.loc[ind_s_0,'pupil_c'].mean(), color='g')
-# plt.xlabel('Pupil response')
-# plt.ylabel('Trials')
-# plt.legend()
-# plt.tight_layout()
-# fig.savefig(os.path.join(fig_dir, 'histograms.pdf'))
-
-
-# # popt = [0.195, 1.589, 32.132, 4.851, 1000]
-# popt = [0.195, 1.589, 32.132, 4.851, 1.059]
-# x1 = np.round(np.arange(0.01,0.725,0.005),3)
-# x2 = np.round(np.arange(0,21,1),3)
-# XX1, XX2 = np.meshgrid(x1, x2)
-# df_surf2 = pd.DataFrame({'charge': XX1.ravel(),
-#                         'rate': XX2.ravel()})
-# df_surf2['ne'] = vns_analyses.log_logistic_3d(np.array(df_surf2[['charge', 'rate']]), *popt)
-# df_surf2 = df_surf2.loc[df_surf2['charge']>0,:]
-# d = df_surf2.loc[df_surf2['rate']==20,:]
-# plt.plot(d['charge'],d['ne'])
-# # d = df_surf2.groupby('charge').mean().reset_index()
-# plt.plot(d['charge'],d['ne'])
-# plt.axhline(popt[2]/2)
-# plt.axvline(popt[0], ls='--')
-# # plt.show()

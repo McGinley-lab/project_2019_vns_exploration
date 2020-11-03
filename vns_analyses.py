@@ -854,6 +854,109 @@ def plot_scalars(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p
     
     return fig
 
+def plot_swarms(df_meta, measure):
+
+    df_meta['zone'] = 1
+    df_meta.loc[df_meta['charge_bin']==0,'zone'] = 0
+    df_meta.loc[df_meta['charge_bin']==4,'zone'] = 2
+
+    fig1 = plt.figure(figsize=(8,6))
+    plt_nr = 1
+    for subj, d in df_meta.groupby(['subj_idx']):
+        ax = fig1.add_subplot(3,4,plt_nr)
+        # sns.swarmplot(x='amplitude', y=measure, hue='rate', dodge=True, size=3, linewidth=0.5, data=d)
+        sns.boxplot(x='amplitude', y=measure, hue='rate', dodge=True, linewidth=0.5, data=d)
+        ax.get_legend().remove()
+        plt_nr += 1
+    sns.despine(trim=False, offset=3)
+    plt.tight_layout()
+
+    fig2 = plt.figure(figsize=(8,6))
+    plt_nr = 1
+    for subj, d in df_meta.groupby(['subj_idx']):
+        ax = fig2.add_subplot(3,4,plt_nr)
+        # sns.swarmplot(x='width', y=measure, hue='rate', dodge=True, size=4, linewidth=0.5, data=d)
+        sns.boxplot(x='width', y=measure, hue='rate', dodge=True, linewidth=0.5, data=d)
+        ax.get_legend().remove()
+        plt_nr += 1
+    sns.despine(trim=False, offset=3)
+    plt.tight_layout()
+
+    fig3 = plt.figure(figsize=(2,2))
+    ax = fig3.add_subplot(111)
+    # sns.swarmplot(x='zone', y=measure, hue='rate', dodge=True, size=4, linewidth=0.5, data=d)
+    sns.boxplot(x='zone', y=measure, hue='rate', dodge=True, linewidth=0.5, data=d)
+    ax.get_legend().remove()
+    sns.despine(trim=False, offset=3)
+    plt.tight_layout()
+
+    # fig = plt.figure(figsize=(6,2))
+    # ax = fig.add_subplot(131)
+    # ax.scatter(np.log10(df_meta.loc[df_meta['rate']==5,'charge']), df_meta.loc[df_meta['rate']==5,measure], s=3, alpha=0.2)
+    # plt.xlabel('Charge')
+    # plt.ylabel(measure)
+    # ax = fig.add_subplot(132)
+    # ax.scatter(np.log10(df_meta.loc[df_meta['rate']==10,'charge']), df_meta.loc[df_meta['rate']==10,measure], s=3, alpha=0.2)
+    # plt.xlabel('Charge')
+    # plt.ylabel(measure)
+    # ax = fig.add_subplot(133)
+    # ax.scatter(np.log10(df_meta.loc[df_meta['rate']==20,'charge']), df_meta.loc[df_meta['rate']==20,measure], s=3, alpha=0.2)
+    # plt.xlabel('Charge')
+    # plt.ylabel(measure)
+    # sns.despine(trim=False, offset=3)
+    # plt.tight_layout()
+
+    # sns.violinplot(x='charge', y=measure, dodge=True, inner='box', linewidth=0.5, data=df_meta)    
+
+    # sns.barplot(x='charge', y=measure, dodge=True, linewidth=0.5, data=df_meta)   
+
+
+
+
+    # fig = plt.figure(figsize=(8,4))
+    # ax = fig.add_subplot(241)
+    # sns.swarmplot(x='amplitude', y=measure, hue='rate', data=df_meta, palette=sns.color_palette(), dodge=True, size=3)
+    # sns.boxplot(x='amplitude', y=measure, hue='rate', color='white', data=df_meta, dodge=True)
+    # ax.get_legend().remove()
+    
+    # ax = fig.add_subplot(242)
+    # sns.swarmplot(x='width', y=measure, hue='rate', data=df_meta, palette=sns.color_palette(), dodge=True, size=3)
+    # sns.boxplot(x='width', y=measure, hue='rate', color='white', data=df_meta, dodge=True)
+    # ax.get_legend().remove()
+
+    # ax = fig.add_subplot(243)
+    # sns.swarmplot(x='zone', y=measure, hue='rate', data=df_meta, palette=sns.color_palette(), dodge=True, size=3)
+    # sns.boxplot(x='zone', y=measure, hue='rate', color='white', data=df_meta, dodge=True)
+    # ax.get_legend().remove()
+
+    # ax = fig.add_subplot(244)
+    # ax.scatter(np.log10(df_meta['charge']), df_meta[measure], s=3, alpha=0.2)
+    # plt.xlabel('Charge')
+    # plt.ylabel(measure)
+
+    # ax = fig.add_subplot(245)
+    # sns.violinplot(x='amplitude', y=measure, hue='rate', dodge=True, inner='box', linewidth=0.5, data=df_meta)
+    # ax.get_legend().remove()
+    
+    # ax = fig.add_subplot(246)
+    # sns.violinplot(x='width', y=measure, hue='rate', dodge=True, inner='box', linewidth=0.5, data=df_meta)
+    # ax.get_legend().remove()
+
+    # ax = fig.add_subplot(247)
+    # sns.violinplot(x='zone', y=measure, hue='rate', dodge=True, inner='box', linewidth=0.5, data=df_meta)
+    # ax.get_legend().remove()
+
+    # ax = fig.add_subplot(248)
+    # ax.scatter(np.log10(df_meta['charge']), df_meta[measure], s=3, alpha=0.2)
+    # plt.xlabel('Charge')
+    # plt.ylabel(measure)
+
+    # sns.despine(trim=False, offset=3)
+    # plt.tight_layout()
+
+    return fig1, fig2, fig3
+
+
 def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), p0=False):
 
     epsilon = 1e-10
@@ -950,7 +1053,7 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), 
             x = np.array(means.loc[means[bin_by[1]]==m2, x_measure])
             y = np.array(means.loc[means[bin_by[1]]==m2, measure])
             for j in range(len(x)):
-                plt.plot(x[j],y[j], 'o', mfc='lightgrey', color=colors[i], zorder=1)
+                plt.plot(x[j], y[j], 'o', mfc='lightgrey', color=colors[i], zorder=1)
             ax.errorbar(x=x, y=y, yerr=np.array(sems.loc[sems[bin_by[1]]==m2, measure]), elinewidth=0.5, markeredgewidth=0.5, 
                             fmt='none', ecolor='darkgrey', capsize=2, zorder=2)
 
@@ -1001,7 +1104,7 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), 
                 d = df_surf.loc[df_surf[bin_by[1]]==m2,].groupby(x_measure).mean().reset_index()
                 ax.plot(d[x_measure], d['ne'], color=colors[i], ls='-', zorder=10)
 
-        plt.ylim(ylim)
+        # plt.ylim(ylim)
         plt.xlabel(x_measure)
         plt.ylabel(ylabel)
         if x_measure == 'charge':
@@ -1017,6 +1120,8 @@ def plot_scalars2(df_meta, measure, ylabel='Pupil response', ylim=(None, None), 
         plot_nr += 1
     sns.despine(trim=False, offset=3)
     plt.tight_layout()
+
+    
 
     return fig
 

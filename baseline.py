@@ -212,6 +212,11 @@ figs[5].savefig(os.path.join(fig_dir, 'eyelid_reversion_to_mean2.pdf'))
 # model = smf.ols("pupil_c ~ 1 + pupil_0 + np.power(pupil_0, 2)", data=df_meta).fit()
 # print(model.summary())
 
+# save source data:
+df = df_meta.loc[:,['subj_idx', 'session', 'pupil_0', 'pupil_c']].reset_index(drop=True)
+df = df.rename({'pupil_c':'pupil', 'pupil_0':'pupil_baseline'}, axis=1)
+df.to_csv(os.path.join(data_dir, 'baseline_dependence_source_data_{}.csv'.format(measure.split('_')[0])))
+
 # plot 1 -- time courses:
 bins = np.array([-10,0.2,0.3,0.4,0.5,0.6,0.7,0.8,10])
 fig = vns_analyses.plot_pupil_responses(df_meta, epochs_p.loc[:, ::10], bins=bins, ylabel='Pupil response\n(% max)', ylim=(0, 1.2))
